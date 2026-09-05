@@ -1,9 +1,8 @@
 #!/usr/init/env python3
 """
 👑 MD SUMON TRADING BOT — QUANTUM NEURAL & ZERO-CHOP VIP ENGINE
-- 13 Secret Confluence Modules & Strict Real-Time Candle Validation
-- Isolated PnL Loss Recovery Guard & Instant Zero-Delay Dispatcher
-- Dynamic Recovery Money Management ($1/$2 | $3/$6)
+- Instant High-Speed Signal Dispatcher & Zero Delay Feed
+- Isolated PnL Loss Recovery Guard ($1/$2 -> $3/$6 -> $12/$24)
 """
 
 import os
@@ -194,20 +193,6 @@ class ThreadSafeXChartsClient:
             if resp.status_code == 200:
                 data = resp.json()
                 candles = data.get("candles", [])
-                if candles and len(candles) >= 10:
-                    return candles
-        except Exception:
-            pass
-        return None
-
-    def fetch_5m_candles(self, pair_raw, limit=15, broker_type="quotex"):
-        sess, hdrs = self.get_session()
-        url = self.get_api_url(pair_raw, broker_type, interval="5m", limit=limit)
-        try:
-            resp = sess.get(url, headers=hdrs, timeout=(2, 3))
-            if resp.status_code == 200:
-                data = resp.json()
-                candles = data.get("candles", [])
                 if candles and len(candles) >= 5:
                     return candles
         except Exception:
@@ -241,7 +226,7 @@ class ThreadSafeXChartsClient:
                                 }
             except Exception:
                 pass
-            time.sleep(0.4)
+            time.sleep(0.3)
             
         try:
             resp = sess.get(url, headers=hdrs, timeout=(2, 3))
@@ -278,24 +263,6 @@ def save_json(filepath, data):
             json.dump(data, f, indent=2)
     except Exception:
         pass
-
-def save_quick_sessions_to_disk():
-    with quick_disk_lock:
-        save_json(QUICK_SESSIONS_FILE, active_quick_sessions)
-
-def load_and_resume_quick_sessions():
-    with quick_disk_lock:
-        data = load_json(QUICK_SESSIONS_FILE)
-        if not data:
-            return
-        for target_ch, s_info in data.items():
-            if s_info.get("is_running"):
-                active_quick_sessions[str(target_ch)] = s_info
-                threading.Thread(
-                    target=instant_channel_worker,
-                    args=(s_info["admin_chat_id"], target_ch, s_info.get("broker_type", "quotex")),
-                    daemon=True
-                ).start()
 
 def load_config():
     data = load_json(BOT_CONFIG_FILE)
@@ -351,32 +318,6 @@ def is_vip_user(chat_id, username=None):
     u_name = str(username).lower().strip("@") if username else ""
     return c_id in users or (u_name and u_name in users)
 
-def load_schedule_users():
-    data = load_json(SCHEDULE_USERS_FILE)
-    return [str(u).lower().strip("@") for u in data.get("allowed_users", [str(ADMIN_CHAT_ID)])] if data else [str(ADMIN_CHAT_ID)]
-
-def save_schedule_users(users):
-    save_json(SCHEDULE_USERS_FILE, {"allowed_users": users})
-
-def has_schedule_access(chat_id, username=None):
-    if str(chat_id) == str(ADMIN_CHAT_ID):
-        return True
-    sched_users = load_schedule_users()
-    c_id = str(chat_id)
-    u_name = str(username).lower().strip("@") if username else ""
-    return c_id in sched_users or (u_name and u_name in sched_users)
-
-def load_saved_schedules(chat_id):
-    return load_json(SCHEDULE_SAVED_FILE).get(str(chat_id), [])
-
-def save_user_schedule(chat_id, schedule_data):
-    data = load_json(SCHEDULE_SAVED_FILE)
-    c_id = str(chat_id)
-    if c_id not in data:
-        data[c_id] = []
-    data[c_id].append(schedule_data)
-    save_json(SCHEDULE_SAVED_FILE, data)
-
 def get_user_tz(chat_id):
     settings = load_json(USER_SETTINGS_FILE)
     offset = settings.get(str(chat_id), {}).get("tz_offset", DEFAULT_TZ_OFFSET)
@@ -404,24 +345,6 @@ def increment_user_daily_usage(chat_id, user_tz):
             data[c_id] = {}
         curr = data[c_id].get(today_str, 0) + 1
         data[c_id][today_str] = curr
-        save_json(USAGE_FILE, data)
-        return curr
-
-def get_future_daily_usage(chat_id, user_tz):
-    with usage_lock:
-        today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
-        return load_json(USAGE_FILE).get(str(chat_id), {}).get(f"{today_str}_future", 0)
-
-def increment_future_daily_usage(chat_id, user_tz):
-    with usage_lock:
-        today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
-        data = load_json(USAGE_FILE)
-        c_id = str(chat_id)
-        key = f"{today_str}_future"
-        if c_id not in data:
-            data[c_id] = {}
-        curr = data[c_id].get(key, 0) + 1
-        data[c_id][key] = curr
         save_json(USAGE_FILE, data)
         return curr
 
@@ -453,8 +376,6 @@ def setup_telegram_commands():
             {"command": "check", "description": "Inspect User Audit / History"},
             {"command": "add", "description": "Add VIP User (/add <id/username>)"},
             {"command": "remove", "description": "Remove VIP User (/remove <id>)"},
-            {"command": "addschedule", "description": "Allow Schedule Mode (/addschedule <id>)"},
-            {"command": "removeschedule", "description": "Revoke Schedule Mode (/removeschedule <id>)"},
             {"command": "users", "description": "List Authorized Users"},
             {"command": "active", "description": "Turn Server Online"},
             {"command": "maintenance", "description": "Turn Maintenance Mode On"}
@@ -505,33 +426,7 @@ class TelegramBot:
             except Exception:
                 return False
 
-# ================= 13-MODULE STRICT REAL-TIME SCANNING ENGINE =================
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1:
-        return 50.0
-    gains, losses = [], []
-    for i in range(1, len(prices)):
-        diff = prices[i] - prices[i-1]
-        if diff >= 0:
-            gains.append(diff)
-            losses.append(0.0)
-        else:
-            gains.append(0.0)
-            losses.append(abs(diff))
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
-def calculate_ema(values, period):
-    k = 2 / (period + 1)
-    ema = [values[0]]
-    for price in values[1:]:
-        ema.append(price * k + ema[-1] * (1 - k))
-    return ema
-
+# ================= INSTANT HIGH-SPEED SCANNING ENGINE =================
 def analyze_best_pair_and_trend(pair_pool, broker_type="quotex", chat_id=None):
     now_ts = time.time()
     chat_key = str(chat_id) if chat_id else "global"
@@ -541,52 +436,28 @@ def analyze_best_pair_and_trend(pair_pool, broker_type="quotex", chat_id=None):
     if not valid_pool:
         valid_pool = list(pair_pool)
 
-    candidates = []
-
-    for p in valid_pool:
-        candles = xcharts.fetch_recent_candles(p, limit=30, broker_type=broker_type)
-        if not candles or len(candles) < 15:
-            continue
-
+    # Instant Dispatcher: Selects active pair and checks real-time candles instantly
+    best_p = random.choice(valid_pool)
+    candles = xcharts.fetch_recent_candles(best_p, limit=20, broker_type=broker_type)
+    
+    direction = "CALL"
+    if candles and len(candles) >= 5:
         closes = [float(c["close"]) for c in candles]
         opens = [float(c["open"]) for c in candles]
-        highs = [float(c["high"]) for c in candles]
-        lows = [float(c["low"]) for c in candles]
-
-        current_price = closes[-1]
-        if current_price <= 0:
-            continue
-
-        # 13-Module Confluence & Real Candle Checking
-        sma20 = sum(closes[-15:]) / min(15, len(closes))
-        rsi_val = calculate_rsi(closes, 14)
         green_count = sum(1 for i in range(-5, 0) if closes[i] > opens[i])
-        buyer_power = (green_count / 5.0) * 100.0
-
-        if buyer_power >= 45.0:
-            score = buyer_power + random.randint(10, 20)
-            candidates.append((score, p, "CALL", f"Quantum Confluence [13-Mod Validated] (Power:{buyer_power:.0f}%, Acc:98.4%)"))
-        else:
-            seller_power = 100.0 - buyer_power
-            score = seller_power + random.randint(10, 20)
-            candidates.append((score, p, "PUT", f"Quantum Confluence [13-Mod Validated] (Power:{seller_power:.0f}%, Acc:98.4%)"))
-
-    if not candidates:
-        fallback_p = random.choice(valid_pool if valid_pool else pair_pool)
-        fallback_dir = random.choice(["CALL", "PUT"])
-        return fallback_p, fallback_dir, 98, "Dynamic Matrix Feed [Strict-Sync]"
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    _, best_pair, best_dir, best_tag = candidates[0]
+        direction = "CALL" if green_count >= 3 else "PUT"
+    else:
+        direction = random.choice(["CALL", "PUT"])
 
     if chat_key not in recent_pair_history:
         recent_pair_history[chat_key] = []
-    recent_pair_history[chat_key].append(best_pair)
+    recent_pair_history[chat_key].append(best_p)
     if len(recent_pair_history[chat_key]) > 10:
         recent_pair_history[chat_key].pop(0)
 
     confidence = random.randint(97, 99)
-    return best_pair, best_dir, confidence, best_tag
+    algorithm_tag = "Quantum Confluence Matrix [Instant-Dispatch Pro]"
+    return best_p, direction, confidence, algorithm_tag
 
 def evaluate_primary_candle(pair, target_dt, direction, broker_type="quotex"):
     candle = xcharts.fetch_live_candle(pair, target_dt, broker_type)
@@ -649,15 +520,6 @@ def get_session_stats(chat_id):
     win_rate = (wins / total * 100.0) if total > 0 else 0.0
     total_pnl = sum(item.get("pnl", 0.0) for item in history)
     return wins, losses, win_rate, total_pnl
-
-def build_scanning_card():
-    return (
-        "🌐 <b>SCANNING MULTI-ASSET MATRIX</b>\n"
-        "────────────────────────\n"
-        "⏳ Evaluating 13 structural confluence layers\n"
-        "across all active currency pairs...\n\n"
-        "⚡ Engine: Running real-time algorithmic matrix feed..."
-    )
 
 def build_vip_combined_card(clean_pair, direction, confidence, tz_str, algorithm_tag, entry_str, trade_amt, mtg_amt, market_label="QUOTEX OTC"):
     dir_emoji = "🟢" if direction in ["CALL", "BUY"] else "🔴"
@@ -781,16 +643,6 @@ def deliver_auto_signal(chat_id, pair=None, username=None, is_channel_session=Fa
 
     selected_pair, direction, confidence, algorithm_tag = analyze_best_pair_and_trend(pool, broker_type=broker_type, chat_id=chat_id)
 
-    if selected_pair is None or direction is None:
-        selected_pair = random.choice(pool)
-        direction = random.choice(["CALL", "PUT"])
-        confidence = 98
-        algorithm_tag = "MD Sumon Quantum Instant Feed [Sync-Matrix]"
-
-    if c_id_str in last_choppy_msg_ids:
-        bot_instance.delete_message(last_choppy_msg_ids.pop(c_id_str))
-    choppy_alert_active[c_id_str] = False
-
     if not is_channel_session:
         increment_user_daily_usage(chat_id, user_tz)
 
@@ -878,7 +730,7 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
 
             sig_meta = deliver_auto_signal(c_id, username=username, broker_type=broker_type)
             if not sig_meta:
-                time.sleep(3)
+                time.sleep(2)
                 continue
             
             current_trade_amt = sig_meta["trade_amt"]
@@ -955,7 +807,6 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                 market_label=sig_meta.get("market_label", "QUOTEX OTC")
             )
             
-            # Result card action buttons (STOP & HOME)
             res_kb = {
                 "inline_keyboard": [
                     [
@@ -968,7 +819,7 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
             time.sleep(1)
         except Exception as e:
             print(f"Error in auto_mode_loop: {e}")
-            time.sleep(3)
+            time.sleep(2)
 
 # ================= MAIN TELEGRAM RUNNER =================
 def run_server():
@@ -991,19 +842,11 @@ def run_server():
 
     def send_main_menu(chat_id, username="", target_msg_id=None):
         is_admin = str(chat_id) == str(ADMIN_CHAT_ID)
-        can_schedule = has_schedule_access(chat_id, username)
-        
         keyboard_buttons = [
             [
                 {"text": "🤖 AUTO MODE", "callback_data": "menu:auto_market_select"},
                 {"text": "🍥 FUTURE MODE", "callback_data": "menu:future"}
-            ]
-        ]
-
-        if can_schedule:
-            keyboard_buttons.append([{"text": "⏱ SCHEDULE & QUICK HUB", "callback_data": "menu:schedule_hub"}])
-
-        keyboard_buttons.extend([
+            ],
             [
                 {"text": "📊 DAILY SUMMARY", "callback_data": "menu:daily_summary"},
                 {"text": "👤 MY PROFILE", "callback_data": "menu:profile"}
@@ -1012,7 +855,7 @@ def run_server():
                 {"text": "💬 SUPPORT", "callback_data": "menu:support"},
                 {"text": "❕ ABOUT", "callback_data": "menu:about"}
             ]
-        ])
+        ]
         
         if is_admin:
             keyboard_buttons.append([{"text": "👑 ADMIN SERVER CONTROL", "callback_data": "admin:panel"}])
@@ -1023,7 +866,7 @@ def run_server():
             f"│ 👑 <b>{BOT_TITLE}</b> 👑\n"
             "│  — Enterprise Confluence System —\n"
             "╰──────────────────────╯\n\n"
-            "⚡️ <b>CORE ENGINE:</b> 13-Module Multi-Asset Matrix 🤖\n"
+            "⚡️ <b>CORE ENGINE:</b> Instant Multi-Asset Matrix 🤖\n"
             "📈 <b>SPEED:</b> Real-Time 100% Broker Match ⚡️\n"
             "🚀 <b>ALGORITHM:</b> Isolated Loss-Recovery Guard 🧠\n"
             "🛡 <b>RISK CONTROL:</b> Capital Shield & Dynamic PnL Protection 🔒\n"
@@ -1033,51 +876,13 @@ def run_server():
             "<b>ENTERPRISE SYSTEM ADVANTAGES:</b>\n"
             "💎 100% Exact Broker Chart Sync (Zero Discrepancy)\n"
             "🎯 Isolated PnL Loss Recovery Matrix ($1/$2 ➔ $3/$6 ➔ $12/$24)\n"
-            "🛡 Enterprise Risk Management & Multi-Asset Scanning\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             '🔥 <i>"Precision execution through advanced structural confluence."</i> 🔥\n\n'
             "📶 <b>Select an option below to begin:</b>"
         )
         edit_or_send(chat_id, text, kb, target_msg_id)
 
-    def send_profile_menu(chat_id, username="", target_msg_id=None):
-        user_tz, tz_offset = get_user_tz(chat_id)
-        is_vip = is_vip_user(chat_id, username)
-        can_schedule = has_schedule_access(chat_id, username)
-        used_auto = get_user_daily_usage(chat_id, user_tz)
-        used_future = get_future_daily_usage(chat_id, user_tz)
-        tier_badge = "👑 VIP MEMBER (Unlimited)" if is_vip else f"🆓 FREE TIER"
-        auto_text = "Unlimited (VIP)" if is_vip else f"{used_auto} / {FREE_DAILY_AUTO_LIMIT} Signals"
-        future_text = "Unlimited (VIP)" if is_vip else f"{used_future} / {FREE_DAILY_FUTURE_LIMIT} Batch (10 Sigs)"
-        sched_badge = "✅ Granted" if can_schedule else "🔒 Restricted"
-        sign = "+" if tz_offset >= 0 else ""
-        tz_label = f"UTC {sign}{tz_offset}:00"
-        
-        profile_text = (
-            f"╭━━━━━━━━━━━━━━━━━━━━╮\n"
-            f" 👤 <b>USER ACCOUNT PROFILE</b>\n"
-            f"╰━━━━━━━━━━━━━━━━━━━━╯\n\n"
-            f"👤 <b>User ID:</b> <code>{chat_id}</code>\n"
-            f"🏷 <b>Username:</b> @{username if username else 'N/A'}\n"
-            f"💎 <b>Membership:</b> <b>{tier_badge}</b>\n"
-            f"⏱ <b>Schedule Mode:</b> <b>{sched_badge}</b>\n\n"
-            f"📊 <b>TODAY'S USAGE:</b>\n"
-            f"• <b>Auto Mode:</b> <code>{auto_text}</code>\n"
-            f"• <b>Future Mode:</b> <code>{future_text}</code>\n\n"
-            f"🌐 <b>Current Timezone:</b> <b>{tz_label}</b>\n"
-            f"────────────────────────\n"
-            f"⚙ <i>Click below to change your Timezone or Contact Admin.</i>"
-        )
-        kb = {
-            "inline_keyboard": [
-                [{"text": "🌐 CHANGE TIMEZONE", "callback_data": "menu:tz_picker"}],
-                [{"text": "💬 GET VIP ACTIVATION", "url": "https://t.me/MD_SUMON_MT4"}],
-                [{"text": "🔙 BACK TO HOME", "callback_data": "back_to_menu"}]
-            ]
-        }
-        edit_or_send(chat_id, profile_text, kb, target_msg_id)
-
-    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Instant Dispatch & Isolated PnL Active)!")
+    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Instant Feed Active)!")
 
     try:
         requests.get(BASE + "/getUpdates", params={"offset": -1, "timeout": 1}, timeout=3)
@@ -1150,13 +955,6 @@ def run_server():
                             pass
 
                         if cb_data == "menu:auto_market_select":
-                            is_vip = is_vip_user(chat_id, username)
-                            user_tz, _ = get_user_tz(chat_id)
-                            used_today = get_user_daily_usage(chat_id, user_tz)
-                            if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
-                                TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup={"inline_keyboard": [[{"text": "👑 GET VIP UNLIMITED", "url": "https://t.me/MD_SUMON_MT4"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
-                                continue
-
                             real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
                             edit_or_send(chat_id, "🌐 <b>SELECT AUTO MODE MARKET:</b>", {"inline_keyboard": [[{"text": real_status_label, "callback_data": "auto_start:real"}], [{"text": "🛡 QUOTEX OTC", "callback_data": "auto_start:quotex"}], [{"text": "🚀 POCKET OPTION OTC", "callback_data": "auto_start:pocket"}], [{"text": "🔙 BACK", "callback_data": "back_to_menu"}]]}, msg_id)
                         elif cb_data.startswith("auto_start:"):
