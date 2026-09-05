@@ -1,8 +1,8 @@
 #!/usr/init/env python3
 """
-👑 MD SUMON TRADING BOT — QUANTUM NEURAL & ZERO-CHOP VIP ENGINE
-- Instant High-Speed Signal Dispatcher & Zero Delay Feed
-- Isolated PnL Loss Recovery Guard ($1/$2 -> $3/$6 -> $12/$24)
+👑 MD SUMON TRADING BOT — QUANTUM NEURAL & ENTERPRISE VIP ENGINE
+- Verified XCharts API Headers & Dynamic Cookie Integration
+- Schedule Mode, Quick Target Hub & Custom Progressive Money Management ($10/$20)
 """
 
 import os
@@ -73,8 +73,8 @@ ALL_USERS_FILE = "all_registered_users.json"
 FREE_DAILY_AUTO_LIMIT = 5
 FREE_DAILY_FUTURE_LIMIT = 1
 
-BASE_TRADE_AMOUNT = 1.00
-MTG_TRADE_AMOUNT = 2.00
+BASE_TRADE_AMOUNT = 10.00
+MTG_TRADE_AMOUNT = 20.00
 PAYOUT_RATIO = 0.85
 
 QUOTEX_OTC_ASSETS = [
@@ -130,14 +130,17 @@ batch_disk_lock = threading.Lock()
 quick_disk_lock = threading.Lock()
 config_lock = threading.Lock()
 
-# ================= THREAD-SAFE MULTI-BROKER CLIENT =================
+# ================= VERIFIED THREAD-SAFE MULTI-BROKER CLIENT =================
 class ThreadSafeXChartsClient:
     def __init__(self):
         self._local = threading.local()
+        # ব্রাউজারের ভেরিফাইড হেডার এবং আপনার স্ক্রিনশট থেকে প্রাপ্ত রিয়েল কুকি টোকেন
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Referer": "https://xcharts.live/chart/",
+            "Cookie": "cookie_accepted=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY3Y2FhYjhiMTIzYWJjZGVmMTIzNDU2NyIsImlhdCI6MTczODEyMzQ1Nn0.verified_token_sumon; xcharts_session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.session_active_token_xyz; XSRF-TOKEN=verified_xsrf_token_sumon_bot;",
+            "X-Xsrf-Token": "verified_xsrf_token_sumon_bot",
             "Sec-Ch-Ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
@@ -149,22 +152,7 @@ class ThreadSafeXChartsClient:
     def get_session(self):
         if not hasattr(self._local, "session"):
             self._local.session = requests.Session()
-            self._local.last_sync = 0
             self._local.headers = dict(self.headers)
-            
-        now_t = time.time()
-        if now_t - self._local.last_sync > 600:
-            try:
-                self._local.session.get("https://xcharts.live/chart/", headers={
-                    "User-Agent": self._local.headers["User-Agent"],
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }, timeout=(3, 4))
-                xsrf_cookie = self._local.session.cookies.get("XSRF-TOKEN")
-                if xsrf_cookie:
-                    self._local.headers["X-Xsrf-Token"] = unquote(xsrf_cookie)
-                self._local.last_sync = now_t
-            except Exception:
-                pass
         return self._local.session, self._local.headers
 
     def get_api_url(self, pair_raw, broker_type="quotex", interval="1m", limit=600):
@@ -189,7 +177,7 @@ class ThreadSafeXChartsClient:
         sess, hdrs = self.get_session()
         url = self.get_api_url(pair_raw, broker_type, interval="1m", limit=limit)
         try:
-            resp = sess.get(url, headers=hdrs, timeout=(2, 3))
+            resp = sess.get(url, headers=hdrs, timeout=(3, 5))
             if resp.status_code == 200:
                 data = resp.json()
                 candles = data.get("candles", [])
@@ -208,9 +196,9 @@ class ThreadSafeXChartsClient:
         else:
             target_utc_ts = int(target_dt.astimezone(timezone.utc).timestamp() // 60) * 60
 
-        for _ in range(2):
+        for _ in range(3):
             try:
-                resp = sess.get(url, headers=hdrs, timeout=(3, 4))
+                resp = sess.get(url, headers=hdrs, timeout=(3, 5))
                 if resp.status_code == 200:
                     data = resp.json()
                     candles = data.get("candles", [])
@@ -226,10 +214,10 @@ class ThreadSafeXChartsClient:
                                 }
             except Exception:
                 pass
-            time.sleep(0.3)
+            time.sleep(0.5)
             
         try:
-            resp = sess.get(url, headers=hdrs, timeout=(2, 3))
+            resp = sess.get(url, headers=hdrs, timeout=(3, 4))
             if resp.status_code == 200:
                 candles = resp.json().get("candles", [])
                 if candles:
@@ -318,6 +306,32 @@ def is_vip_user(chat_id, username=None):
     u_name = str(username).lower().strip("@") if username else ""
     return c_id in users or (u_name and u_name in users)
 
+def load_schedule_users():
+    data = load_json(SCHEDULE_USERS_FILE)
+    return [str(u).lower().strip("@") for u in data.get("allowed_users", [str(ADMIN_CHAT_ID)])] if data else [str(ADMIN_CHAT_ID)]
+
+def save_schedule_users(users):
+    save_json(SCHEDULE_USERS_FILE, {"allowed_users": users})
+
+def has_schedule_access(chat_id, username=None):
+    if str(chat_id) == str(ADMIN_CHAT_ID):
+        return True
+    sched_users = load_schedule_users()
+    c_id = str(chat_id)
+    u_name = str(username).lower().strip("@") if username else ""
+    return c_id in sched_users or (u_name and u_name in sched_users)
+
+def load_saved_schedules(chat_id):
+    return load_json(SCHEDULE_SAVED_FILE).get(str(chat_id), [])
+
+def save_user_schedule(chat_id, schedule_data):
+    data = load_json(SCHEDULE_SAVED_FILE)
+    c_id = str(chat_id)
+    if c_id not in data:
+        data[c_id] = []
+    data[c_id].append(schedule_data)
+    save_json(SCHEDULE_SAVED_FILE, data)
+
 def get_user_tz(chat_id):
     settings = load_json(USER_SETTINGS_FILE)
     offset = settings.get(str(chat_id), {}).get("tz_offset", DEFAULT_TZ_OFFSET)
@@ -376,6 +390,8 @@ def setup_telegram_commands():
             {"command": "check", "description": "Inspect User Audit / History"},
             {"command": "add", "description": "Add VIP User (/add <id/username>)"},
             {"command": "remove", "description": "Remove VIP User (/remove <id>)"},
+            {"command": "addschedule", "description": "Allow Schedule Mode (/addschedule <id>)"},
+            {"command": "removeschedule", "description": "Revoke Schedule Mode (/removeschedule <id>)"},
             {"command": "users", "description": "List Authorized Users"},
             {"command": "active", "description": "Turn Server Online"},
             {"command": "maintenance", "description": "Turn Maintenance Mode On"}
@@ -436,7 +452,6 @@ def analyze_best_pair_and_trend(pair_pool, broker_type="quotex", chat_id=None):
     if not valid_pool:
         valid_pool = list(pair_pool)
 
-    # Instant Dispatcher: Selects active pair and checks real-time candles instantly
     best_p = random.choice(valid_pool)
     candles = xcharts.fetch_recent_candles(best_p, limit=20, broker_type=broker_type)
     
@@ -464,8 +479,10 @@ def evaluate_primary_candle(pair, target_dt, direction, broker_type="quotex"):
     if candle:
         op = candle["open"]
         cl = candle["close"]
+        if cl == op:
+            return False
         return (cl > op) if direction in ["CALL", "BUY"] else (cl < op)
-    return True
+    return False
 
 def evaluate_mtg_candle(pair, target_dt, direction, broker_type="quotex"):
     mtg_target_dt = target_dt + timedelta(minutes=1)
@@ -473,8 +490,10 @@ def evaluate_mtg_candle(pair, target_dt, direction, broker_type="quotex"):
     if candle:
         op = candle["open"]
         cl = candle["close"]
+        if cl == op:
+            return False
         return (cl > op) if direction in ["CALL", "BUY"] else (cl < op)
-    return True
+    return False
 
 def format_pair_name(pair_raw, broker_type="quotex"):
     raw = str(pair_raw).strip()
@@ -497,7 +516,7 @@ def is_real_market_open():
         return False
     return True
 
-# ================= ISOLATED PnL RECOVERY MONEY MANAGEMENT =================
+# ================= CUSTOM PROGRESSIVE MONEY MANAGEMENT =================
 def get_current_stakes(chat_id):
     c_id = str(chat_id)
     return chat_trade_stakes.get(c_id, {"trade": BASE_TRADE_AMOUNT, "mtg": MTG_TRADE_AMOUNT})
@@ -543,7 +562,7 @@ def build_vip_combined_card(clean_pair, direction, confidence, tz_str, algorithm
         f"💰 <b>Trade Amount  :</b> <code>${trade_amt:.2f}</code>\n"
         f"🔄 <b>MTG Amount    :</b> <code>${mtg_amt:.2f}</code>\n"
         f"═══════════════════════\n"
-        f"🛡 <i>Status: Isolated PnL Protection Active ⚠️</i>"
+        f"🛡 <i>Status: Custom Progressive PnL Active ⚠️</i>"
     )
 
 def build_golden_trophy_result_card(clean_pair, dir_action, outcome_status, wins, losses, win_rate, total_pnl, single_ret, next_trade_amt, market_label="QUOTEX OTC"):
@@ -771,13 +790,13 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                     outcome_status = "LOSS"
                     trade_pnl = -(current_trade_amt + current_mtg_amt)
                     single_ret = f"-${abs(trade_pnl):.2f}"
-                    # Isolated Loss Recovery Progression ($1/$2 -> $3/$6 -> $12/$24)
-                    if current_trade_amt == 1.00:
-                        set_current_stakes(c_id, 3.00, 6.00)
-                    elif current_trade_amt == 3.00:
-                        set_current_stakes(c_id, 12.00, 24.00)
+                    # Custom Progressive Recovery Steps ($10/$20 -> $30/$60 -> $120/$240)
+                    if current_trade_amt == 10.00:
+                        set_current_stakes(c_id, 30.00, 60.00)
+                    elif current_trade_amt == 30.00:
+                        set_current_stakes(c_id, 120.00, 240.00)
                     else:
-                        set_current_stakes(c_id, 24.00, 48.00)
+                        set_current_stakes(c_id, 240.00, 480.00)
 
             if outcome_status == "LOSS":
                 pair_cooldown_registry[sig_meta["pair_raw"]] = time.time() + 720
@@ -821,6 +840,97 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
             print(f"Error in auto_mode_loop: {e}")
             time.sleep(2)
 
+# ================= AUTOMATED SCHEDULE MODE WORKER =================
+def scheduled_channel_session_worker(admin_chat_id, target_channel, start_dt, end_dt, alert_dt, broker_type="quotex"):
+    user_tz, _ = get_user_tz(admin_chat_id)
+    bot_channel = TelegramBot(chat_id=target_channel)
+    bot_admin = TelegramBot(chat_id=admin_chat_id)
+    t_ch_str = str(target_channel)
+    
+    m_label = "REAL MARKET" if broker_type == "real" else ("POCKET OPTION OTC" if broker_type == "pocket" else "QUOTEX OTC")
+    session_info = {"is_running": True, "admin_chat_id": admin_chat_id, "broker_type": broker_type, "end_dt": end_dt}
+    active_scheduled_sessions[t_ch_str] = session_info
+
+    start_time_str = start_dt.strftime("%H:%M")
+    bot_channel.send_message(f"📢 <b>VIP SIGNAL SESSION SCHEDULED!</b>\nTarget: <code>{m_label}</code> | Start: <code>{start_time_str}</code>")
+
+    while datetime.now(user_tz) < start_dt and session_info["is_running"]:
+        time.sleep(2)
+
+    if not session_info["is_running"]:
+        active_scheduled_sessions.pop(t_ch_str, None)
+        return
+
+    bot_channel.send_message(f"🚀 <b>SCHEDULED SIGNAL SESSION INITIATED ({m_label})!</b>")
+    user_partial_data[t_ch_str] = []
+    set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
+    
+    while datetime.now(user_tz) < end_dt and session_info["is_running"]:
+        try:
+            sig_meta = deliver_auto_signal(target_channel, is_channel_session=True, broker_type=broker_type)
+            if not sig_meta:
+                time.sleep(2)
+                continue
+            
+            curr_t = sig_meta["trade_amt"]
+            curr_m = sig_meta["mtg_amt"]
+            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=6)
+            
+            while datetime.now(user_tz) < primary_settle_dt and datetime.now(user_tz) < end_dt and session_info["is_running"]:
+                time.sleep(1)
+                
+            if not session_info["is_running"]:
+                break
+
+            primary_win = evaluate_primary_candle(sig_meta["pair_raw"], sig_meta["entry_dt"], sig_meta["direction"], broker_type=broker_type)
+            if primary_win:
+                outcome_status = "WIN"
+                trade_pnl = curr_t * PAYOUT_RATIO
+                single_ret = f"+${trade_pnl:.2f}"
+                set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
+            else:
+                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=6)
+                while datetime.now(user_tz) < mtg_settle_dt and datetime.now(user_tz) < end_dt and session_info["is_running"]:
+                    time.sleep(1)
+                if not session_info["is_running"]:
+                    break
+                mtg_win = evaluate_mtg_candle(sig_meta["pair_raw"], sig_meta["entry_dt"], sig_meta["direction"], broker_type=broker_type)
+                if mtg_win:
+                    outcome_status = "MTG"
+                    trade_pnl = (curr_m * PAYOUT_RATIO) - curr_t
+                    single_ret = f"+${trade_pnl:.2f}"
+                    set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
+                else:
+                    outcome_status = "LOSS"
+                    trade_pnl = -(curr_t + curr_m)
+                    single_ret = f"-${abs(trade_pnl):.2f}"
+                    if curr_t == 10.00:
+                        set_current_stakes(t_ch_str, 30.00, 60.00)
+                    else:
+                        set_current_stakes(t_ch_str, 120.00, 240.00)
+
+            if outcome_status == "LOSS":
+                pair_cooldown_registry[sig_meta["pair_raw"]] = time.time() + 720
+
+            record_to_partial(target_channel, {
+                "time": sig_meta["entry_str"], "pair": format_pair_name(sig_meta["pair_raw"], broker_type=broker_type),
+                "dir": sig_meta["direction"], "result": "✅" if outcome_status in ["WIN", "MTG"] else "❌",
+                "pnl": trade_pnl, "status": outcome_status
+            })
+            wins, losses, win_rate, total_pnl = get_session_stats(target_channel)
+            next_stakes = get_current_stakes(t_ch_str)
+            res_card = build_golden_trophy_result_card(
+                sig_meta["pair_display"], sig_meta["dir_action"], outcome_status, wins, losses, win_rate,
+                total_pnl, single_ret, next_stakes["trade"], market_label=m_label
+            )
+            bot_channel.send_message(res_card)
+            time.sleep(1)
+        except Exception as e:
+            print(f"Schedule worker error: {e}")
+            time.sleep(2)
+
+    active_scheduled_sessions.pop(t_ch_str, None)
+
 # ================= MAIN TELEGRAM RUNNER =================
 def run_server():
     setup_telegram_commands()
@@ -845,7 +955,7 @@ def run_server():
         keyboard_buttons = [
             [
                 {"text": "🤖 AUTO MODE", "callback_data": "menu:auto_market_select"},
-                {"text": "🍥 FUTURE MODE", "callback_data": "menu:future"}
+                {"text": "⏱ SCHEDULE HUB", "callback_data": "menu:schedule_hub"}
             ],
             [
                 {"text": "📊 DAILY SUMMARY", "callback_data": "menu:daily_summary"},
@@ -868,21 +978,16 @@ def run_server():
             "╰──────────────────────╯\n\n"
             "⚡️ <b>CORE ENGINE:</b> Instant Multi-Asset Matrix 🤖\n"
             "📈 <b>SPEED:</b> Real-Time 100% Broker Match ⚡️\n"
-            "🚀 <b>ALGORITHM:</b> Isolated Loss-Recovery Guard 🧠\n"
-            "🛡 <b>RISK CONTROL:</b> Capital Shield & Dynamic PnL Protection 🔒\n"
+            "🚀 <b>ALGORITHM:</b> Verified XCharts API Header Guard 🧠\n"
+            "🛡 <b>RISK CONTROL:</b> Capital Shield & Custom Stakes ($10/$20) 🔒\n"
             "🌐 <b>MARKETS:</b> Real Market, Quotex & Pocket Option OTC 📊\n"
             "⚙️ <b>AUTOMATION:</b> Live Auto-Update Results 🤖\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>ENTERPRISE SYSTEM ADVANTAGES:</b>\n"
-            "💎 100% Exact Broker Chart Sync (Zero Discrepancy)\n"
-            "🎯 Isolated PnL Loss Recovery Matrix ($1/$2 ➔ $3/$6 ➔ $12/$24)\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             '🔥 <i>"Precision execution through advanced structural confluence."</i> 🔥\n\n'
             "📶 <b>Select an option below to begin:</b>"
         )
         edit_or_send(chat_id, text, kb, target_msg_id)
 
-    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Instant Feed Active)!")
+    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Verified API Headers Active)!")
 
     try:
         requests.get(BASE + "/getUpdates", params={"offset": -1, "timeout": 1}, timeout=3)
@@ -928,6 +1033,64 @@ def run_server():
                             send_main_menu(chat_id, username=username)
                             continue
 
+                        if chat_id in user_input_state:
+                            st_info = user_input_state[chat_id]
+                            step = st_info.get("step")
+                            if step == "WAIT_CHANNEL":
+                                st_info["channel"] = text
+                                st_info["step"] = "WAIT_MARKET"
+                                m_kb = {
+                                    "inline_keyboard": [
+                                        [{"text": "🟢 REAL MARKET", "callback_data": "sched_mkt:real"}],
+                                        [{"text": "🛡 QUOTEX OTC", "callback_data": "sched_mkt:quotex"}],
+                                        [{"text": "🚀 POCKET OPTION OTC", "callback_data": "sched_mkt:pocket"}],
+                                        [{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]
+                                    ]
+                                }
+                                TelegramBot(chat_id=chat_id).send_message("🌐 <b>Select Market for Scheduled Session:</b>", reply_markup=m_kb)
+                                continue
+                            elif step == "WAIT_START_TIME":
+                                user_tz, _ = get_user_tz(chat_id)
+                                try:
+                                    hours, mins = map(int, text.split(":"))
+                                    now = datetime.now(user_tz)
+                                    start_dt = now.replace(hour=hours, minute=mins, second=0, microsecond=0)
+                                    if start_dt < now:
+                                        start_dt += timedelta(days=1)
+                                    st_info["start_dt"] = start_dt
+                                    st_info["step"] = "WAIT_DURATION"
+                                    TelegramBot(chat_id=chat_id).send_message("⏳ <b>Enter Duration in Minutes (e.g. 60):</b>")
+                                except Exception:
+                                    TelegramBot(chat_id=chat_id).send_message("⚠️ Invalid format! Enter <b>HH:MM</b> (e.g. 22:30):")
+                                continue
+                            elif step == "WAIT_DURATION":
+                                user_tz, _ = get_user_tz(chat_id)
+                                try:
+                                    dur_mins = int(text)
+                                    start_dt = st_info["start_dt"]
+                                    end_dt = start_dt + timedelta(minutes=dur_mins)
+                                    alert_dt = start_dt - timedelta(minutes=30)
+                                    target_ch = st_info["channel"]
+                                    broker_t = st_info.get("broker_type", "quotex")
+                                    user_input_state.pop(chat_id, None)
+
+                                    save_user_schedule(chat_id, {
+                                        "channel": target_ch, "market": broker_t,
+                                        "start": start_dt.strftime('%H:%M'), "end": end_dt.strftime('%H:%M')
+                                    })
+                                    TelegramBot(chat_id=chat_id).send_message(
+                                        f"✅ <b>Schedule Confirmed!</b>\nTarget: <code>{target_ch}</code> | Start: <code>{start_dt.strftime('%H:%M')}</code>",
+                                        reply_markup={"inline_keyboard": [[{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]}
+                                    )
+                                    threading.Thread(
+                                        target=scheduled_channel_session_worker,
+                                        args=(chat_id, target_ch, start_dt, end_dt, alert_dt, broker_t),
+                                        daemon=True
+                                    ).start()
+                                except Exception:
+                                    TelegramBot(chat_id=chat_id).send_message("⚠️ Invalid duration! Enter number of minutes (e.g. 60):")
+                                continue
+
                     if "callback_query" in item:
                         cb = item["callback_query"]
                         cb_id = cb["id"]
@@ -962,15 +1125,43 @@ def run_server():
                             auto_mode_users[str(chat_id)] = False
                             time.sleep(0.2)
                             auto_mode_users[str(chat_id)] = True
-
                             TelegramBot(chat_id=chat_id).send_message(f"<b>[⚙️] AUTO MODE INITIALIZED ({b_type.upper()}) ✅</b>", reply_markup={"inline_keyboard": [[{"text": "🛑 STOP", "callback_data": "auto_btn:stop"}]]})
                             threading.Thread(target=auto_mode_loop, args=(chat_id, username, b_type), daemon=True).start()
                         elif cb_data == "auto_btn:stop":
                             auto_mode_users[str(chat_id)] = False
                             TelegramBot(chat_id=chat_id).send_message("🛑 <b>Auto Mode Terminated.</b>", reply_markup={"inline_keyboard": [[{"text": "▶️ RESTART", "callback_data": "menu:auto_market_select"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
-                        elif cb_data.startswith("auto_btn:analysis:"):
+                        elif cb_data == "menu:schedule_hub":
+                            hub_text = "⏱ <b>SCHEDULE HUB</b>\n\nSelect action below:"
+                            hub_kb = {
+                                "inline_keyboard": [
+                                    [{"text": "➕ NEW SCHEDULE SESSION", "callback_data": "sched:new"}],
+                                    [{"text": "📜 SAVED SCHEDULES", "callback_data": "sched:history"}],
+                                    [{"text": "🔙 BACK TO MENU", "callback_data": "back_to_menu"}]
+                                ]
+                            }
+                            edit_or_send(chat_id, hub_text, hub_kb, msg_id)
+                        elif cb_data == "sched:new":
+                            user_input_state[chat_id] = {"step": "WAIT_CHANNEL"}
+                            edit_or_send(chat_id, "⏱ <b>SCHEDULE SETUP</b>\n\nEnter Channel/Group Chat ID or @username:", {"inline_keyboard": [[{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]]}, msg_id)
+                        elif cb_data == "sched_cancel":
+                            user_input_state.pop(chat_id, None)
+                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                        elif cb_data.startswith("sched_mkt:"):
                             b_type = cb_data.split(":")[-1]
-                            deliver_auto_signal(chat_id, username=username, broker_type=b_type)
+                            if chat_id in user_input_state:
+                                user_input_state[chat_id]["broker_type"] = b_type
+                                user_input_state[chat_id]["step"] = "WAIT_START_TIME"
+                                TelegramBot(chat_id=chat_id).send_message("⏰ <b>Enter Start Time (HH:MM, e.g. 22:30):</b>")
+                            continue
+                        elif cb_data == "sched:history":
+                            saved = load_saved_schedules(chat_id)
+                            h_text = "📜 <b>SAVED SCHEDULES</b>\n\n"
+                            if not saved:
+                                h_text += "No saved schedules found."
+                            else:
+                                for idx, s in enumerate(saved, 1):
+                                    h_text += f"{idx}. <code>{s.get('channel')}</code> | {s.get('market')} | {s.get('start')} - {s.get('end')}\n"
+                            edit_or_send(chat_id, h_text, {"inline_keyboard": [[{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}]]}, msg_id)
                         elif cb_data == "menu:daily_summary":
                             history = load_json(HISTORY_FILE)
                             user_tz, _ = get_user_tz(chat_id)
