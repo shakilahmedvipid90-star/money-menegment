@@ -42,7 +42,7 @@ def start_background_web_server():
 threading.Thread(target=start_background_web_server, daemon=True).start()
 
 # ================= CONFIGURATION =================
-TELEGRAM_BOT_TOKEN = "8978217705:AAHkmibkUrAvnOMBGfplq_z_lMcPjpnzQBA"
+TELEGRAM_BOT_TOKEN = "8978217705:AAECNzUCYezwSYvOB88lmakNAhwWnI6HpYQ"
 ADMIN_CHAT_ID = "7170071838"
 DEFAULT_TZ_OFFSET = 4  # UTC+4
 TELEGRAM_HANDLE = "@MD_SUMON_MT4"
@@ -91,9 +91,9 @@ LIVE_REAL_PAIRS = [
     "USDCAD", "USDCHF"
 ]
 
-pair_cooldown_registry = {}     # {pair: expire_timestamp}
-recent_pair_history = {}        # {chat_id: [last_pair_1, last_pair_2]}
-active_scheduled_sessions = {}  # {target_channel: {"is_running": True, ...}}
+pair_cooldown_registry = {}     
+recent_pair_history = {}        
+active_scheduled_sessions = {}  
 
 user_active_menu_msg = {}
 session_state = {}
@@ -191,7 +191,6 @@ class XChartsClient:
                     if candles:
                         for c in reversed(candles[-25:]):
                             c_time = c.get("time")
-                            # টাইম গ্যাপ উইন্ডো বাড়িয়ে নিখুঁত ম্যাচিং নিশ্চিত করা হলো
                             if c_time is not None and abs(c_time - target_utc_ts) <= 90:
                                 return {
                                     "open": float(c.get("open")),
@@ -1292,7 +1291,7 @@ def generate_large_signal_batch(pairs, user_tz, duration_mins=240, is_vip=False,
     signals.sort(key=lambda s: s["target_dt"])
     return signals
 
-# ================= MAIN TELEGRAM BOT RUNNER =================
+# ================= ROBUST TELEGRAM POLLING RUNNER (FIXED) =================
 def run_server():
     setup_telegram_commands()
     BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -1509,596 +1508,540 @@ def run_server():
             threading.Thread(target=continuous_background_scanner, args=(chat_id, batch_data), daemon=True).start()
 
     load_and_resume_active_batches()
-    print(f"🚀 {BOT_TITLE} Master Engine is Ready!")
+    print(f"🚀 {BOT_TITLE} Master Engine is Ready and Polling...")
 
     offset = None
     while True:
         try:
-            params = {"timeout": 20, "limit": 100}
+            params = {"timeout": 25, "limit": 100}
             if offset:
                 params["offset"] = offset
-            resp = requests.get(GET_UPDATES, params=params, timeout=25)
+            
+            resp = requests.get(GET_UPDATES, params=params, timeout=30)
+            if resp.status_code != 200:
+                time.sleep(2)
+                continue
+                
             data = resp.json()
             if not data.get("ok"):
                 time.sleep(1)
                 continue
 
             updates = data.get("result", [])
-            if updates:
-                offset = updates[-1]["update_id"] + 1
-                for item in updates:
-                    up_id = item.get("update_id")
-                    if up_id in processed_updates:
+            for item in updates:
+                up_id = item.get("update_id")
+                offset = up_id + 1
+                
+                if up_id in processed_updates:
+                    continue
+                processed_updates.add(up_id)
+                if len(processed_updates) > 1000:
+                    processed_updates.clear()
+
+                if "message" in item:
+                    msg = item["message"]
+                    chat_id = str(msg["chat"]["id"])
+                    username = msg.get("from", {}).get("username", "")
+                    text = msg.get("text", "").strip()
+
+                    record_user_activity(chat_id)
+
+                    if text.startswith("/start"):
+                        user_input_state.pop(chat_id, None)
+                        old_m = user_active_menu_msg.pop(chat_id, None)
+                        if old_m:
+                            TelegramBot(chat_id=chat_id).delete_message(old_m)
+                        send_main_menu(chat_id, username=username)
                         continue
-                    processed_updates.add(up_id)
-                    if len(processed_updates) > 1000:
-                        processed_updates.clear()
 
-                    if "message" in item:
-                        msg = item["message"]
-                        chat_id = str(msg["chat"]["id"])
-                        username = msg.get("from", {}).get("username", "")
-                        text = msg.get("text", "").strip()
-
-                        record_user_activity(chat_id)
-
-                        if text.startswith("/start"):
-                            user_input_state.pop(chat_id, None)
-                            old_m = user_active_menu_msg.pop(chat_id, None)
-                            if old_m:
-                                TelegramBot(chat_id=chat_id).delete_message(old_m)
-                            send_main_menu(chat_id, username=username)
+                    if str(chat_id) == str(ADMIN_CHAT_ID):
+                        if text.startswith("/check"):
+                            parts = text.split(maxsplit=1)
+                            if len(parts) > 1:
+                                target = parts[1].strip().lower().strip("@")
+                                user_tz, _ = get_user_tz(target)
+                                is_v = is_vip_user(target)
+                                can_s = has_schedule_access(target)
+                                u_auto = get_user_daily_usage(target, user_tz)
+                                u_fut = get_future_daily_usage(target, user_tz)
+                                audit_msg = (
+                                    f"🔍 <b>USER AUDIT REPORT:</b> <code>{target}</code>\n"
+                                    f"━━━━━━━━━━━━━━━━━━━\n"
+                                    f"💎 <b>VIP Status:</b> {'👑 ACTIVE (Unlimited)' if is_v else '🆓 FREE TIER'}\n"
+                                    f"⏱ <b>Schedule Access:</b> {'✅ GRANTED' if can_s else '🔒 RESTRICTED'}\n"
+                                    f"🤖 <b>Auto Mode Used Today:</b> <code>{u_auto} signals</code>\n"
+                                    f"🍥 <b>Future Batches Used:</b> <code>{u_fut} batch</code>\n"
+                                    f"━━━━━━━━━━━━━━━━━━━"
+                                )
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(audit_msg)
+                            else:
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/check &lt;user_id or username&gt;</code>")
                             continue
 
-                        if str(chat_id) == str(ADMIN_CHAT_ID):
-                            if text.startswith("/check"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    user_tz, _ = get_user_tz(target)
-                                    is_v = is_vip_user(target)
-                                    can_s = has_schedule_access(target)
-                                    u_auto = get_user_daily_usage(target, user_tz)
-                                    u_fut = get_future_daily_usage(target, user_tz)
-                                    audit_msg = (
-                                        f"🔍 <b>USER AUDIT REPORT:</b> <code>{target}</code>\n"
-                                        f"━━━━━━━━━━━━━━━━━━━\n"
-                                        f"💎 <b>VIP Status:</b> {'👑 ACTIVE (Unlimited)' if is_v else '🆓 FREE TIER'}\n"
-                                        f"⏱ <b>Schedule Access:</b> {'✅ GRANTED' if can_s else '🔒 RESTRICTED'}\n"
-                                        f"🤖 <b>Auto Mode Used Today:</b> <code>{u_auto} signals</code>\n"
-                                        f"🍥 <b>Future Batches Used:</b> <code>{u_fut} batch</code>\n"
-                                        f"━━━━━━━━━━━━━━━━━━━"
-                                    )
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(audit_msg)
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/check &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/add"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip()
-                                    target_clean = target.lower().strip("@")
-                                    vip_users = load_vip_users()
-                                    if target_clean not in vip_users:
-                                        vip_users.append(target_clean)
-                                        save_vip_users(vip_users)
-                                    
-                                    notif_sent = False
-                                    try:
-                                        target_chat_id = int(target_clean)
-                                        res = TelegramBot(chat_id=target_chat_id).send_message(build_vip_activated_notification_card())
-                                        if res:
-                                            notif_sent = True
-                                    except Exception:
-                                        pass
-                                    
-                                    status_extra = " (📩 <i>Notification sent to user</i>)" if notif_sent else ""
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(
-                                        f"✅ <b>User Added to VIP:</b> <code>{target}</code>{status_extra}"
-                                    )
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/add &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/remove"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    vip_users = load_vip_users()
-                                    if target in vip_users:
-                                        vip_users.remove(target)
-                                        save_vip_users(vip_users)
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Removed VIP Access for:</b> <code>{target}</code>")
-                                    else:
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in VIP list.")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/remove &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/addschedule"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    sched_users = load_schedule_users()
-                                    if target not in sched_users:
-                                        sched_users.append(target)
-                                        save_schedule_users(sched_users)
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"✅ <b>Schedule Mode access granted for:</b> <code>{target}</code>")
-                                    else:
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"ℹ️ User <code>{target}</code> already has Schedule Mode access.")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/addschedule &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/removeschedule"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    sched_users = load_schedule_users()
-                                    if target in sched_users:
-                                        sched_users.remove(target)
-                                        save_schedule_users(sched_users)
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Schedule Mode access revoked for:</b> <code>{target}</code>")
-                                    else:
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in Schedule list.")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/removeschedule &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text == "/users":
+                        elif text.startswith("/add"):
+                            parts = text.split(maxsplit=1)
+                            if len(parts) > 1:
+                                target = parts[1].strip()
+                                target_clean = target.lower().strip("@")
                                 vip_users = load_vip_users()
-                                sched_users = load_schedule_users()
-                                v_list = "\n".join([f"• <code>{u}</code>" for u in vip_users]) if vip_users else "None"
-                                s_list = "\n".join([f"• <code>{u}</code>" for u in sched_users]) if sched_users else "None"
+                                if target_clean not in vip_users:
+                                    vip_users.append(target_clean)
+                                    save_vip_users(vip_users)
+                                
+                                notif_sent = False
+                                try:
+                                    target_chat_id = int(target_clean)
+                                    res = TelegramBot(chat_id=target_chat_id).send_message(build_vip_activated_notification_card())
+                                    if res:
+                                        notif_sent = True
+                                except Exception:
+                                    pass
+                                
+                                status_extra = " (📩 <i>Notification sent to user</i>)" if notif_sent else ""
                                 TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(
-                                    f"👑 <b>VIP AUTHORIZED USERS ({len(vip_users)}):</b>\n{v_list}\n\n"
-                                    f"⏱ <b>SCHEDULE ALLOWED USERS ({len(sched_users)}):</b>\n{s_list}"
+                                    f"✅ <b>User Added to VIP:</b> <code>{target}</code>{status_extra}"
                                 )
-                                continue
-
-                            elif text == "/maintenance":
-                                set_maintenance_mode(True)
-                                auto_mode_users.clear()
-                                maint_msg = (
-                                    "⚠️ <b>SYSTEM NOTICE: MAINTENANCE MODE</b> ⚠️\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "🛠 <b>Status:</b> <code>System Under Optimization / Update</code>\n"
-                                    "⏳ <b>Expected Time:</b> <code>Few Minutes</code>\n"
-                                    "🔒 <b>Signals:</b> <code>Temporarily Paused</code>\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "📢 <i>System is under routine optimization. The bot will automatically resume shortly.</i>\n\n"
-                                    f"💬 <b>Admin Support:</b> <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\n"
-                                    f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-                                )
-                                broadcast_to_all_users(maint_msg)
-                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🛠 <b>Maintenance Mode Activated. All users locked.</b>")
-                                continue
-
-                            elif text == "/active":
-                                set_maintenance_mode(False)
-                                active_msg = (
-                                    "🟢 <b>SYSTEM STATUS: SERVER ONLINE</b> 🟢\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    f"⚡ <b>Engine:</b> <code>{BOT_TITLE} V1</code>\n"
-                                    "📡 <b>Market Feeds:</b> <code>Real & OTC Sync Active</code>\n"
-                                    "🎯 <b>Status:</b> <b>100% READY FOR SIGNALS</b>\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "📶 <i>All systems operational. You can now use the bot!</i>\n"
-                                    f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-                                )
-                                broadcast_to_all_users(active_msg)
-                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🟢 <b>Server Online Activated. System unlocked for all users.</b>")
-                                continue
-
-                        if is_maintenance_active() and str(chat_id) != str(ADMIN_CHAT_ID):
-                            TelegramBot(chat_id=chat_id).send_message(build_maintenance_card())
+                            else:
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/add &lt;user_id or username&gt;</code>")
                             continue
 
-                        if chat_id in user_input_state:
-                            st_info = user_input_state[chat_id]
-                            step = st_info.get("step")
-                            cancel_kb = {"inline_keyboard": [[{"text": "❌ CANCEL & BACK TO MENU", "callback_data": "sched_cancel"}]]}
+                        elif text.startswith("/remove"):
+                            parts = text.split(maxsplit=1)
+                            if len(parts) > 1:
+                                target = parts[1].strip().lower().strip("@")
+                                vip_users = load_vip_users()
+                                if target in vip_users:
+                                    vip_users.remove(target)
+                                    save_vip_users(vip_users)
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Removed VIP Access for:</b> <code>{target}</code>")
+                                else:
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in VIP list.")
+                            else:
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/remove &lt;user_id or username&gt;</code>")
+                            continue
 
-                            if step == "WAIT_CHANNEL":
-                                st_info["channel"] = text
-                                st_info["step"] = "WAIT_MARKET"
-                                real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
-                                market_kb = {
-                                    "inline_keyboard": [
-                                        [{"text": real_status_label, "callback_data": "sched_mkt:real"}],
-                                        [{"text": "🛡 QUOTEX OTC", "callback_data": "sched_mkt:quotex"}],
-                                        [{"text": "🚀 POCKET OPTION OTC", "callback_data": "sched_mkt:pocket"}],
-                                        [{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]
-                                    ]
-                                }
+                        elif text.startswith("/addschedule"):
+                            parts = text.split(maxsplit=1)
+                            if len(parts) > 1:
+                                target = parts[1].strip().lower().strip("@")
+                                sched_users = load_schedule_users()
+                                if target not in sched_users:
+                                    sched_users.append(target)
+                                    save_schedule_users(sched_users)
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"✅ <b>Schedule Mode access granted for:</b> <code>{target}</code>")
+                                else:
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"ℹ️ User <code>{target}</code> already has Schedule Mode access.")
+                            else:
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/addschedule &lt;user_id or username&gt;</code>")
+                            continue
+
+                        elif text.startswith("/removeschedule"):
+                            parts = text.split(maxsplit=1)
+                            if len(parts) > 1:
+                                target = parts[1].strip().lower().strip("@")
+                                sched_users = load_schedule_users()
+                                if target in sched_users:
+                                    sched_users.remove(target)
+                                    save_schedule_users(sched_users)
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Schedule Mode access revoked for:</b> <code>{target}</code>")
+                                else:
+                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in Schedule list.")
+                            else:
+                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/removeschedule &lt;user_id or username&gt;</code>")
+                            continue
+
+                        elif text == "/users":
+                            vip_users = load_vip_users()
+                            sched_users = load_schedule_users()
+                            v_list = "\n".join([f"• <code>{u}</code>" for u in vip_users]) if vip_users else "None"
+                            s_list = "\n".join([f"• <code>{u}</code>" for u in sched_users]) if sched_users else "None"
+                            TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(
+                                f"👑 <b>VIP AUTHORIZED USERS ({len(vip_users)}):</b>\n{v_list}\n\n"
+                                f"⏱ <b>SCHEDULE ALLOWED USERS ({len(sched_users)}):</b>\n{s_list}"
+                            )
+                            continue
+
+                        elif text == "/maintenance":
+                            set_maintenance_mode(True)
+                            auto_mode_users.clear()
+                            maint_msg = (
+                                "⚠️ <b>SYSTEM NOTICE: MAINTENANCE MODE</b> ⚠️\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                "🛠 <b>Status:</b> <code>System Under Optimization / Update</code>\n"
+                                "⏳ <b>Expected Time:</b> <code>Few Minutes</code>\n"
+                                "🔒 <b>Signals:</b> <code>Temporarily Paused</code>\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                "📢 <i>System is under routine optimization. The bot will automatically resume shortly.</i>\n\n"
+                                f"💬 <b>Admin Support:</b> <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\n"
+                                f"👑 <b>{BOT_TITLE} VIP</b> 👑"
+                            )
+                            broadcast_to_all_users(maint_msg)
+                            TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🛠 <b>Maintenance Mode Activated. All users locked.</b>")
+                            continue
+
+                        elif text == "/active":
+                            set_maintenance_mode(False)
+                            active_msg = (
+                                "🟢 <b>SYSTEM STATUS: SERVER ONLINE</b> 🟢\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                f"⚡ <b>Engine:</b> <code>{BOT_TITLE} V1</code>\n"
+                                "📡 <b>Market Feeds:</b> <code>Real & OTC Sync Active</code>\n"
+                                "🎯 <b>Status:</b> <b>100% READY FOR SIGNALS</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                "📶 <i>All systems operational. You can now use the bot!</i>\n"
+                                f"👑 <b>{BOT_TITLE} VIP</b> 👑"
+                            )
+                            broadcast_to_all_users(active_msg)
+                            TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🟢 <b>Server Online Activated. System unlocked for all users.</b>")
+                            continue
+
+                    if is_maintenance_active() and str(chat_id) != str(ADMIN_CHAT_ID):
+                        TelegramBot(chat_id=chat_id).send_message(build_maintenance_card())
+                        continue
+
+                    if chat_id in user_input_state:
+                        st_info = user_input_state[chat_id]
+                        step = st_info.get("step")
+                        cancel_kb = {"inline_keyboard": [[{"text": "❌ CANCEL & BACK TO MENU", "callback_data": "sched_cancel"}]]}
+
+                        if step == "WAIT_CHANNEL":
+                            st_info["channel"] = text
+                            st_info["step"] = "WAIT_MARKET"
+                            real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
+                            market_kb = {
+                                "inline_keyboard": [
+                                    [{"text": real_status_label, "callback_data": "sched_mkt:real"}],
+                                    [{"text": "🛡 QUOTEX OTC", "callback_data": "sched_mkt:quotex"}],
+                                    [{"text": "🚀 POCKET OPTION OTC", "callback_data": "sched_mkt:pocket"}],
+                                    [{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]
+                                ]
+                            }
+                            TelegramBot(chat_id=chat_id).send_message(
+                                "🌐 <b>Select Market for Scheduled Session:</b>",
+                                reply_markup=market_kb
+                            )
+                            continue
+
+                        elif step == "WAIT_START_TIME":
+                            user_tz, _ = get_user_tz(chat_id)
+                            try:
+                                hours, mins = map(int, text.split(":"))
+                                now = datetime.now(user_tz)
+                                start_dt = now.replace(hour=hours, minute=mins, second=0, microsecond=0)
+                                if start_dt < (now - timedelta(minutes=1)):
+                                    start_dt += timedelta(days=1)
+                                    
+                                st_info["start_dt"] = start_dt
+                                st_info["step"] = "WAIT_DURATION"
                                 TelegramBot(chat_id=chat_id).send_message(
-                                    "🌐 <b>Select Market for Scheduled Session:</b>",
-                                    reply_markup=market_kb
+                                    "⏳ <b>Enter Duration in Minutes (e.g. 60):</b>",
+                                    reply_markup=cancel_kb
                                 )
-                                continue
-
-                            elif step == "WAIT_START_TIME":
-                                user_tz, _ = get_user_tz(chat_id)
-                                try:
-                                    hours, mins = map(int, text.split(":"))
-                                    now = datetime.now(user_tz)
-                                    start_dt = now.replace(hour=hours, minute=mins, second=0, microsecond=0)
-                                    if start_dt < (now - timedelta(minutes=1)):
-                                        start_dt += timedelta(days=1)
-                                        
-                                    st_info["start_dt"] = start_dt
-                                    st_info["step"] = "WAIT_DURATION"
-                                    TelegramBot(chat_id=chat_id).send_message(
-                                        "⏳ <b>Enter Duration in Minutes (e.g. 60):</b>",
-                                        reply_markup=cancel_kb
-                                    )
-                                except Exception:
-                                    TelegramBot(chat_id=chat_id).send_message(
-                                        "⚠️ Invalid time format! Please enter in <b>HH:MM</b> format (e.g. 22:30):",
-                                        reply_markup=cancel_kb
-                                    )
-                                continue
-
-                            elif step == "WAIT_DURATION":
-                                user_tz, _ = get_user_tz(chat_id)
-                                try:
-                                    dur_mins = int(text)
-                                    start_dt = st_info["start_dt"]
-                                    end_dt = start_dt + timedelta(minutes=dur_mins)
-                                    alert_dt = start_dt - timedelta(minutes=30)
-                                    target_ch = st_info["channel"]
-                                    broker_t = st_info.get("broker_type", "quotex")
-                                    
-                                    user_input_state.pop(chat_id, None)
-
-                                    save_user_schedule(chat_id, {
-                                        "channel": target_ch,
-                                        "market": broker_t,
-                                        "start": start_dt.strftime('%H:%M'),
-                                        "end": end_dt.strftime('%H:%M'),
-                                        "date": start_dt.strftime('%Y-%m-%d')
-                                    })
-
-                                    if broker_t == "real":
-                                        m_lbl = "REAL MARKET"
-                                    elif broker_t == "pocket":
-                                        m_lbl = "POCKET OPTION OTC"
-                                    else:
-                                        m_lbl = "QUOTEX OTC"
-
-                                    confirm_text = (
-                                        f"✅ <b>Schedule Confirmed & Saved!</b>\n"
-                                        f"━━━━━━━━━━━━━━━━━━━\n"
-                                        f"• <b>Target Channel:</b> <code>{target_ch}</code>\n"
-                                        f"• <b>Market Type:</b> <code>{m_lbl}</code>\n"
-                                        f"• <b>Start Time:</b> <code>{start_dt.strftime('%H:%M')}</code>\n"
-                                        f"━━━━━━━━━━━━━━━━━━━\n"
-                                        f"🤖 <i>The bot will post signals in the channel and control panel will appear in your chat.</i>"
-                                    )
-                                    TelegramBot(chat_id=chat_id).send_message(
-                                        confirm_text,
-                                        reply_markup={"inline_keyboard": [[{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]}
-                                    )
-                                    
-                                    threading.Thread(
-                                        target=scheduled_channel_session_worker,
-                                        args=(chat_id, target_ch, start_dt, end_dt, alert_dt, broker_t),
-                                        daemon=True
-                                    ).start()
-                                except Exception:
-                                    TelegramBot(chat_id=chat_id).send_message(
-                                        "⚠️ Invalid duration! Please enter number of minutes (e.g. 60):",
-                                        reply_markup=cancel_kb
-                                    )
-                                continue
-
-                            elif step == "EDIT_SCHEDULE_INPUT":
-                                user_input_state.pop(chat_id, None)
+                            except Exception:
                                 TelegramBot(chat_id=chat_id).send_message(
-                                    "✅ <b>Schedule Updated Successfully!</b>",
+                                    "⚠️ Invalid time format! Please enter in <b>HH:MM</b> format (e.g. 22:30):",
+                                    reply_markup=cancel_kb
+                                )
+                            continue
+
+                        elif step == "WAIT_DURATION":
+                            user_tz, _ = get_user_tz(chat_id)
+                            try:
+                                dur_mins = int(text)
+                                start_dt = st_info["start_dt"]
+                                end_dt = start_dt + timedelta(minutes=dur_mins)
+                                alert_dt = start_dt - timedelta(minutes=30)
+                                target_ch = st_info["channel"]
+                                broker_t = st_info.get("broker_type", "quotex")
+                                
+                                user_input_state.pop(chat_id, None)
+
+                                save_user_schedule(chat_id, {
+                                    "channel": target_ch,
+                                    "market": broker_t,
+                                    "start": start_dt.strftime('%H:%M'),
+                                    "end": end_dt.strftime('%H:%M'),
+                                    "date": start_dt.strftime('%Y-%m-%d')
+                                })
+
+                                if broker_t == "real":
+                                    m_lbl = "REAL MARKET"
+                                elif broker_t == "pocket":
+                                    m_lbl = "POCKET OPTION OTC"
+                                else:
+                                    m_lbl = "QUOTEX OTC"
+
+                                confirm_text = (
+                                    f"✅ <b>Schedule Confirmed & Saved!</b>\n"
+                                    f"━━━━━━━━━━━━━━━━━━━\n"
+                                    f"• <b>Target Channel:</b> <code>{target_ch}</code>\n"
+                                    f"• <b>Market Type:</b> <code>{m_lbl}</code>\n"
+                                    f"• <b>Start Time:</b> <code>{start_dt.strftime('%H:%M')}</code>\n"
+                                    f"━━━━━━━━━━━━━━━━━━━\n"
+                                    f"🤖 <i>The bot will post signals in the channel and control panel will appear in your chat.</i>"
+                                )
+                                TelegramBot(chat_id=chat_id).send_message(
+                                    confirm_text,
                                     reply_markup={"inline_keyboard": [[{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]}
                                 )
-                                continue
-
-                    if "callback_query" in item:
-                        cb = item["callback_query"]
-                        cb_id = cb["id"]
-                        
-                        if hasattr(run_server, "handled_callbacks"):
-                            if cb_id in run_server.handled_callbacks:
-                                continue
-                        else:
-                            run_server.handled_callbacks = set()
-                        
-                        run_server.handled_callbacks.add(cb_id)
-                        if len(run_server.handled_callbacks) > 500:
-                            run_server.handled_callbacks.clear()
-
-                        cb_data = cb.get("data", "")
-                        chat_id = str(cb["message"]["chat"]["id"])
-                        username = cb.get("from", {}).get("username", "")
-                        msg_id = cb["message"]["message_id"]
-
-                        record_user_activity(chat_id)
-
-                        try:
-                            requests.post(ANSWER_CALLBACK, data={"callback_query_id": cb_id}, timeout=3)
-                        except Exception:
-                            pass
-
-                        if str(chat_id) == str(ADMIN_CHAT_ID):
-                            if cb_data == "admin:panel":
-                                send_admin_panel(chat_id, msg_id)
-                                continue
-                            elif cb_data == "adm_act:maintenance":
-                                set_maintenance_mode(True)
-                                auto_mode_users.clear()
-                                maint_msg = (
-                                    "⚠️ <b>SYSTEM NOTICE: MAINTENANCE MODE</b> ⚠️\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "🛠 <b>Status:</b> <code>System Under Optimization / Update</code>\n"
-                                    "⏳ <b>Expected Time:</b> <code>Few Minutes</code>\n"
-                                    "🔒 <b>Signals:</b> <code>Temporarily Paused</code>\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "📢 <i>System is under routine optimization. The bot will automatically resume shortly.</i>\n\n"
-                                    f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-                                )
-                                broadcast_to_all_users(maint_msg)
-                                send_admin_panel(chat_id, msg_id)
-                                continue
-                            elif cb_data == "adm_act:online":
-                                set_maintenance_mode(False)
-                                active_msg = (
-                                    "🟢 <b>SYSTEM STATUS: SERVER ONLINE</b> 🟢\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    f"⚡ <b>Engine:</b> <code>{BOT_TITLE} V1</code>\n"
-                                    "📡 <b>Market Feeds:</b> <code>Real & OTC Sync Active</code>\n"
-                                    "🎯 <b>Status:</b> <b>100% READY FOR SIGNALS</b>\n"
-                                    "━━━━━━━━━━━━━━━━━━━\n"
-                                    "📶 <i>All systems operational. You can now use the bot!</i>\n"
-                                    f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-                                )
-                                broadcast_to_all_users(active_msg)
-                                send_admin_panel(chat_id, msg_id)
-                                continue
-
-                        if is_maintenance_active() and str(chat_id) != str(ADMIN_CHAT_ID):
-                            TelegramBot(chat_id=chat_id).send_message(build_maintenance_card())
-                            continue
-
-                        if cb_data.startswith("sched_ctrl:partial:"):
-                            target_ch = cb_data.split(":")[-1]
-                            user_tz, _ = get_user_tz(chat_id)
-                            partial_text = build_partial_scoreboard_text(target_ch, user_tz)
-                            TelegramBot(chat_id=target_ch).send_message(partial_text)
-                            TelegramBot(chat_id=chat_id).send_message(f"✅ <b>Partial Scorecard Sent to</b> <code>{target_ch}</code>!")
-                            continue
-                        elif cb_data.startswith("sched_ctrl:stop:"):
-                            target_ch = cb_data.split(":")[-1]
-                            if target_ch in active_scheduled_sessions:
-                                active_scheduled_sessions[target_ch]["is_running"] = False
-                                TelegramBot(chat_id=chat_id).send_message(f"🛑 <b>Scheduled session for <code>{target_ch}</code> has been stopped manually!</b>")
-                            else:
-                                TelegramBot(chat_id=chat_id).send_message("ℹ️ No active scheduled session was found running for this channel.")
-                            continue
-
-                        if cb_data == "sched_cancel":
-                            user_input_state.pop(chat_id, None)
-                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data.startswith("sched_mkt:"):
-                            b_type = cb_data.split(":")[-1]
-                            if chat_id in user_input_state:
-                                user_input_state[chat_id]["broker_type"] = b_type
-                                user_input_state[chat_id]["step"] = "WAIT_START_TIME"
+                                
+                                threading.Thread(
+                                    target=scheduled_channel_session_worker,
+                                    args=(chat_id, target_ch, start_dt, end_dt, alert_dt, broker_t),
+                                    daemon=True
+                                ).start()
+                            except Exception:
                                 TelegramBot(chat_id=chat_id).send_message(
-                                    "⏰ <b>Enter Session Start Time (24h format - HH:MM, e.g. 22:30):</b>",
-                                    reply_markup={"inline_keyboard": [[{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]]}
+                                    "⚠️ Invalid duration! Please enter number of minutes (e.g. 60):",
+                                    reply_markup=cancel_kb
                                 )
                             continue
-                        elif cb_data == "menu:schedule_hub":
-                            if not has_schedule_access(chat_id, username):
-                                TelegramBot(chat_id=chat_id).send_message("🔒 <i>Schedule Mode is restricted to authorized operators only. Contact Admin @MD_SUMON_MT4.</i>")
-                                continue
-                            
-                            active_ch = None
-                            for ch, sess in active_scheduled_sessions.items():
-                                if sess.get("is_running"):
-                                    active_ch = ch
-                                    break
 
-                            if active_ch:
-                                hub_text = (
-                                    f"⏱ <b>SCHEDULE MANAGEMENT HUB</b>\n\n"
-                                    f"🔴 <b>Active Session Running:</b> <code>{active_ch}</code>\n\n"
-                                    f"Choose an action below:"
-                                )
-                                hub_kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "🎴 SEND PARTIAL TO CHANNEL", "callback_data": f"sched_ctrl:partial:{active_ch}"}],
-                                        [{"text": "🛑 STOP ACTIVE SCHEDULE", "callback_data": f"sched_ctrl:stop:{active_ch}"}],
-                                        [{"text": "➕ NEW SCHEDULE", "callback_data": "sched:new"}],
-                                        [{"text": "📜 SCHEDULE HISTORY", "callback_data": "sched:history"}],
-                                        [{"text": "🔙 BACK TO MENU", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                            else:
-                                hub_text = "⏱ <b>SCHEDULE MANAGEMENT HUB</b>\n\nChoose an action below:"
-                                hub_kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "➕ NEW SCHEDULE", "callback_data": "sched:new"}],
-                                        [{"text": "📜 SCHEDULE HISTORY & SAVED", "callback_data": "sched:history"}],
-                                        [{"text": "✏️ EDIT SCHEDULE", "callback_data": "sched:edit"}],
-                                        [{"text": "🔙 BACK TO MENU", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                            edit_or_send(chat_id, hub_text, hub_kb, msg_id)
-                        elif cb_data == "sched:new":
-                            user_input_state[chat_id] = {"step": "WAIT_CHANNEL"}
-                            prompt = (
-                                "⏱ <b>AUTOMATED SCHEDULE MODE SETUP</b>\n\n"
-                                "🎯 Please enter Target Channel/Group Chat ID or @username:\n"
-                                "(e.g. <code>@your_channel</code> or <code>-1001234567890</code>)"
-                            )
-                            edit_or_send(chat_id, prompt, {"inline_keyboard": [[{"text": "❌ CANCEL & BACK TO MENU", "callback_data": "sched_cancel"}]]}, msg_id)
-                        elif cb_data == "sched:history":
-                            saved = load_saved_schedules(chat_id)
-                            if not saved:
-                                h_text = "📜 <b>SCHEDULE HISTORY</b>\n\nNo saved or past schedules found."
-                            else:
-                                h_text = "📜 <b>SCHEDULE HISTORY & SAVED LIST</b>\n\n"
-                                for idx, s in enumerate(saved, 1):
-                                    h_text += f"{idx}. Target: <code>{s.get('channel')}</code> | Market: {s.get('market', 'quotex')} | Time: {s.get('start')} - {s.get('end')}\n"
-                            edit_or_send(chat_id, h_text, {"inline_keyboard": [[{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}]]}, msg_id)
-                        elif cb_data == "sched:edit":
-                            saved = load_saved_schedules(chat_id)
-                            if not saved:
-                                edit_text = "✏️ <b>EDIT SCHEDULE</b>\n\nNo active schedules available to edit."
-                                edit_kb = {"inline_keyboard": [[{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}]]}
-                            else:
-                                edit_text = "✏️ <b>SELECT SCHEDULE TO EDIT:</b>\n\n"
-                                edit_buttons = []
-                                for idx, s in enumerate(saved, 1):
-                                    edit_buttons.append([{"text": f"Schedule #{idx} ({s.get('start')} - {s.get('end')})", "callback_data": f"sched_edit_sel:{idx-1}"}])
-                                edit_buttons.append([{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}])
-                                edit_kb = {"inline_keyboard": edit_buttons}
-                            edit_or_send(chat_id, edit_text, edit_kb, msg_id)
-                        elif cb_data.startswith("sched_edit_sel:"):
-                            user_input_state[chat_id] = {"step": "EDIT_SCHEDULE_INPUT"}
-                            edit_or_send(chat_id, "✏️ <b>Send new time in HH:MM format (e.g. 23:00) to update this schedule:</b>", {"inline_keyboard": [[{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]]}, msg_id)
-                        elif cb_data == "menu:profile":
-                            send_profile_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data == "menu:tz_picker":
-                            send_tz_picker(chat_id, target_msg_id=msg_id)
-                        elif cb_data.startswith("set_tz:"):
-                            offset_val = float(cb_data.split(":")[-1])
-                            set_user_tz(chat_id, offset_val)
-                            send_profile_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data == "menu:auto_market_select":
-                            is_vip = is_vip_user(chat_id, username)
-                            user_tz, _ = get_user_tz(chat_id)
-                            used_today = get_user_daily_usage(chat_id, user_tz)
-                            if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
-                                kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
-                                        [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                                TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
-                                continue
-
-                            real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
-                            edit_or_send(chat_id, "🌐 <b>SELECT AUTO MODE MARKET:</b>", {"inline_keyboard": [[{"text": real_status_label, "callback_data": "auto_start:real"}], [{"text": "🛡 QUOTEX OTC", "callback_data": "auto_start:quotex"}], [{"text": "🚀 POCKET OPTION OTC", "callback_data": "auto_start:pocket"}], [{"text": "🔙 BACK", "callback_data": "back_to_menu"}]]}, msg_id)
-                        elif cb_data.startswith("auto_start:"):
-                            b_type = cb_data.split(":")[-1]
-                            
-                            is_vip = is_vip_user(chat_id, username)
-                            user_tz, _ = get_user_tz(chat_id)
-                            used_today = get_user_daily_usage(chat_id, user_tz)
-                            if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
-                                kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
-                                        [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                                TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
-                                continue
-
-                            auto_mode_users[str(chat_id)] = False
-                            time.sleep(0.3)
-                            auto_mode_users[str(chat_id)] = True
-
-                            TelegramBot(chat_id=chat_id).send_message(f"<b>[⚙️] AUTO MODE ACTIVATED ({b_type.upper()}) ✅</b>", reply_markup={"inline_keyboard": [[{"text": "🛑 STOP AUTO", "callback_data": "auto_btn:stop"}]]})
-                            threading.Thread(target=auto_mode_loop, args=(chat_id, username, b_type), daemon=True).start()
-                        elif cb_data == "proto_btn:stop" or cb_data == "auto_btn:stop":
-                            auto_mode_users[str(chat_id)] = False
-                            TelegramBot(chat_id=chat_id).send_message("🛑 <b>Auto Signal Mode Stopped.</b>", reply_markup={"inline_keyboard": [[{"text": "▶️ RESTART AUTO", "callback_data": "menu:auto_market_select"}], [{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]})
-                        elif cb_data.startswith("auto_btn:analysis:"):
-                            b_type = cb_data.split(":")[-1]
-                            is_vip = is_vip_user(chat_id, username)
-                            user_tz, _ = get_user_tz(chat_id)
-                            used_today = get_user_daily_usage(chat_id, user_tz)
-                            if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
-                                kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
-                                        [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                                TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
-                                continue
-                            deliver_auto_signal(chat_id, username=username, broker_type=b_type)
-                        elif cb_data.startswith("auto_btn:analysis"):
-                            deliver_auto_signal(chat_id, username=username, broker_type="quotex")
-                        elif cb_data.startswith("auto_btn:next"):
-                            is_vip = is_vip_user(chat_id, username)
-                            user_tz, _ = get_user_tz(chat_id)
-                            used_today = get_user_daily_usage(chat_id, user_tz)
-                            if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
-                                kb = {
-                                    "inline_keyboard": [
-                                        [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
-                                        [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
-                                    ]
-                                }
-                                TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
-                                continue
-                            deliver_auto_signal(chat_id, username=username, broker_type="quotex")
-                        elif cb_data == "auto_btn:partial":
-                            user_tz, _ = get_user_tz(chat_id)
-                            TelegramBot(chat_id=chat_id).send_message(build_partial_scoreboard_text(chat_id, user_tz), reply_markup={"inline_keyboard": [[{"text": "🔄 NEW SIGNAL", "callback_data": "auto_btn:next"}, {"text": "❌ RESET PARTIAL", "callback_data": "partial:reset"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
-                        elif cb_data == "partial:reset":
-                            user_partial_data[str(chat_id)] = []
-                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data == "menu:future":
-                            real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
-                            edit_or_send(chat_id, "🌐 <b>SELECT FUTURE MODE MARKET:</b>", {"inline_keyboard": [[{"text": real_status_label, "callback_data": "select_mkt:real:real"}], [{"text": "🛡 QUOTEX OTC", "callback_data": "select_mkt:quotex:quotex"}], [{"text": "🚀 POCKET OPTION OTC", "callback_data": "select_mkt:pocket:pocket"}], [{"text": "🔙 BACK", "callback_data": "back_to_menu"}]]}, msg_id)
-                        elif cb_data.startswith("select_mkt:"):
-                            parts = cb_data.split(":")
-                            session_state.setdefault(chat_id, {})["broker"] = parts[1]
-                            session_state.setdefault(chat_id, {})["broker_type"] = parts[2]
-                            edit_or_send(chat_id, "⏱ <b>SELECT SIGNAL DURATION:</b>", {"inline_keyboard": [[{"text": "⏱ 15 min", "callback_data": "time:15"}, {"text": "⏱ 30 min", "callback_data": "time:30"}], [{"text": "⏱ 1 Hour", "callback_data": "time:60"}, {"text": "⏱ 2 Hours", "callback_data": "time:120"}], [{"text": "🔥 4 Hours (Large Batch)", "callback_data": "time:240"}], [{"text": "🔙 Back", "callback_data": "menu:future"}]]}, msg_id)
-                        elif cb_data.startswith("time:"):
-                            session_state.setdefault(chat_id, {})["window_mins"] = int(cb_data.split(":")[-1])
-                            generate_and_send_batch_signals(chat_id, msg_id, username=username)
-                        elif cb_data == "btn:refresh":
-                            batch = active_batches.get(chat_id)
-                            if batch:
-                                user_tz, tz_off = get_user_tz(chat_id)
-                                updated_text = build_exact_user_format(batch["signals"], batch["broker"], user_tz, tz_off)
-                                TelegramBot(chat_id=chat_id).edit_message(msg_id, updated_text, reply_markup={"inline_keyboard": [[{"text": "💥 REFRESH NOW", "callback_data": "btn:refresh"}, {"text": "🔮 GENERATE NEW LIST", "callback_data": "btn:gen_new"}], [{"text": "🗑 DELETE", "callback_data": "btn:del_list"}, {"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
-                        elif cb_data == "btn:gen_new":
-                            generate_and_send_batch_signals(chat_id, msg_id, username=username)
-                        elif cb_data == "btn:del_list":
-                            active_batches.pop(chat_id, None)
-                            save_active_batches_to_disk()
-                            TelegramBot(chat_id=chat_id).delete_message(msg_id)
-                            send_main_menu(chat_id, username=username)
-                        elif cb_data == "menu:daily_summary":
-                            history = load_json(HISTORY_FILE)
-                            user_tz, _ = get_user_tz(chat_id)
-                            today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
-                            d_stats = history.get(chat_id, {}).get(today_str, {"win": 0, "mtg": 0, "loss": 0})
-                            total = d_stats.get('win', 0) + d_stats.get('mtg', 0) + d_stats.get('loss', 0)
-                            wins_total = d_stats.get('win', 0) + d_stats.get('mtg', 0)
-                            winrate = f"{(wins_total) / total * 100:.1f}%" if total > 0 else "0.0%"
-                            summary_text = (
-                                f"📊 <b>DAILY SUMMARY ({today_str})</b>\n────────────────────────\n🟩 Direct Wins: {d_stats.get('win', 0)}\n🛡 MTG Wins: {d_stats.get('mtg', 0)}\n❌ Loss: {d_stats.get('loss', 0)}\n🎯 Total Win Rate: {winrate}"
-                            )
-                            edit_or_send(chat_id, summary_text, {"inline_keyboard": [[{"text": "🔙 Back", "callback_data": "back_to_menu"}]]}, msg_id)
-                        elif cb_data == "menu:support":
-                            TelegramBot(chat_id=chat_id).send_message(f"📞 <b>SUPPORT</b>\n\nAdmin: <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\nBot Handle: <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>")
-                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data.startswith("menu:about"):
-                            TelegramBot(chat_id=chat_id).send_message(f"ℹ️ <b>ABOUT</b>\n\n{BOT_TITLE} — VIP Signal Bot V1.")
-                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
-                        elif cb_data == "back_to_menu":
+                        elif step == "EDIT_SCHEDULE_INPUT":
                             user_input_state.pop(chat_id, None)
-                            send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                            TelegramBot(chat_id=chat_id).send_message(
+                                "✅ <b>Schedule Updated Successfully!</b>",
+                                reply_markup={"inline_keyboard": [[{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]}
+                            )
+                            continue
 
-        except Exception:
+                if "callback_query" in item:
+                    cb = item["callback_query"]
+                    cb_id = cb["id"]
+                    cb_data = cb.get("data", "")
+                    chat_id = str(cb["message"]["chat"]["id"])
+                    username = cb.get("from", {}).get("username", "")
+                    msg_id = cb["message"]["message_id"]
+
+                    record_user_activity(chat_id)
+
+                    try:
+                        requests.post(ANSWER_CALLBACK, data={"callback_query_id": cb_id}, timeout=3)
+                    except Exception:
+                        pass
+
+                    if str(chat_id) == str(ADMIN_CHAT_ID):
+                        if cb_data == "admin:panel":
+                            send_admin_panel(chat_id, msg_id)
+                            continue
+                        elif cb_data == "adm_act:maintenance":
+                            set_maintenance_mode(True)
+                            auto_mode_users.clear()
+                            send_admin_panel(chat_id, msg_id)
+                            continue
+                        elif cb_data == "adm_act:online":
+                            set_maintenance_mode(False)
+                            send_admin_panel(chat_id, msg_id)
+                            continue
+
+                    if is_maintenance_active() and str(chat_id) != str(ADMIN_CHAT_ID):
+                        TelegramBot(chat_id=chat_id).send_message(build_maintenance_card())
+                        continue
+
+                    if cb_data.startswith("sched_ctrl:partial:"):
+                        target_ch = cb_data.split(":")[-1]
+                        user_tz, _ = get_user_tz(chat_id)
+                        partial_text = build_partial_scoreboard_text(target_ch, user_tz)
+                        TelegramBot(chat_id=target_ch).send_message(partial_text)
+                        TelegramBot(chat_id=chat_id).send_message(f"✅ <b>Partial Scorecard Sent to</b> <code>{target_ch}</code>!")
+                        continue
+                    elif cb_data.startswith("sched_ctrl:stop:"):
+                        target_ch = cb_data.split(":")[-1]
+                        if target_ch in active_scheduled_sessions:
+                            active_scheduled_sessions[target_ch]["is_running"] = False
+                            TelegramBot(chat_id=chat_id).send_message(f"🛑 <b>Scheduled session for <code>{target_ch}</code> has been stopped manually!</b>")
+                        else:
+                            TelegramBot(chat_id=chat_id).send_message("ℹ️ No active scheduled session was found running for this channel.")
+                        continue
+
+                    if cb_data == "sched_cancel":
+                        user_input_state.pop(chat_id, None)
+                        send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data.startswith("sched_mkt:"):
+                        b_type = cb_data.split(":")[-1]
+                        if chat_id in user_input_state:
+                            user_input_state[chat_id]["broker_type"] = b_type
+                            user_input_state[chat_id]["step"] = "WAIT_START_TIME"
+                            TelegramBot(chat_id=chat_id).send_message(
+                                "⏰ <b>Enter Session Start Time (24h format - HH:MM, e.g. 22:30):</b>",
+                                reply_markup={"inline_keyboard": [[{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]]}
+                            )
+                        continue
+                    elif cb_data == "menu:schedule_hub":
+                        if not has_schedule_access(chat_id, username):
+                            TelegramBot(chat_id=chat_id).send_message("🔒 <i>Schedule Mode is restricted to authorized operators only. Contact Admin @MD_SUMON_MT4.</i>")
+                            continue
+                        
+                        active_ch = None
+                        for ch, sess in active_scheduled_sessions.items():
+                            if sess.get("is_running"):
+                                active_ch = ch
+                                break
+
+                        if active_ch:
+                            hub_text = (
+                                f"⏱ <b>SCHEDULE MANAGEMENT HUB</b>\n\n"
+                                f"🔴 <b>Active Session Running:</b> <code>{active_ch}</code>\n\n"
+                                f"Choose an action below:"
+                            )
+                            hub_kb = {
+                                "inline_keyboard": [
+                                    [{"text": "🎴 SEND PARTIAL TO CHANNEL", "callback_data": f"sched_ctrl:partial:{active_ch}"}],
+                                    [{"text": "🛑 STOP ACTIVE SCHEDULE", "callback_data": f"sched_ctrl:stop:{active_ch}"}],
+                                    [{"text": "➕ NEW SCHEDULE", "callback_data": "sched:new"}],
+                                    [{"text": "📜 SCHEDULE HISTORY", "callback_data": "sched:history"}],
+                                    [{"text": "🔙 BACK TO MENU", "callback_data": "back_to_menu"}]
+                                ]
+                            }
+                        else:
+                            hub_text = "⏱ <b>SCHEDULE MANAGEMENT HUB</b>\n\nChoose an action below:"
+                            hub_kb = {
+                                "inline_keyboard": [
+                                    [{"text": "➕ NEW SCHEDULE", "callback_data": "sched:new"}],
+                                    [{"text": "📜 SCHEDULE HISTORY & SAVED", "callback_data": "sched:history"}],
+                                    [{"text": "✏️ EDIT SCHEDULE", "callback_data": "sched:edit"}],
+                                    [{"text": "🔙 BACK TO MENU", "callback_data": "back_to_menu"}]
+                                ]
+                            }
+                        edit_or_send(chat_id, hub_text, hub_kb, msg_id)
+                    elif cb_data == "sched:new":
+                        user_input_state[chat_id] = {"step": "WAIT_CHANNEL"}
+                        prompt = (
+                            "⏱ <b>AUTOMATED SCHEDULE MODE SETUP</b>\n\n"
+                            "🎯 Please enter Target Channel/Group Chat ID or @username:\n"
+                            "(e.g. <code>@your_channel</code> or <code>-1001234567890</code>)"
+                        )
+                        edit_or_send(chat_id, prompt, {"inline_keyboard": [[{"text": "❌ CANCEL & BACK TO MENU", "callback_data": "sched_cancel"}]]}, msg_id)
+                    elif cb_data == "sched:history":
+                        saved = load_saved_schedules(chat_id)
+                        if not saved:
+                            h_text = "📜 <b>SCHEDULE HISTORY</b>\n\nNo saved or past schedules found."
+                        else:
+                            h_text = "📜 <b>SCHEDULE HISTORY & SAVED LIST</b>\n\n"
+                            for idx, s in enumerate(saved, 1):
+                                h_text += f"{idx}. Target: <code>{s.get('channel')}</code> | Market: {s.get('market', 'quotex')} | Time: {s.get('start')} - {s.get('end')}\n"
+                        edit_or_send(chat_id, h_text, {"inline_keyboard": [[{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}]]}, msg_id)
+                    elif cb_data == "sched:edit":
+                        saved = load_saved_schedules(chat_id)
+                        if not saved:
+                            edit_text = "✏️ <b>EDIT SCHEDULE</b>\n\nNo active schedules available to edit."
+                            edit_kb = {"inline_keyboard": [[{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}]]}
+                        else:
+                            edit_text = "✏️ <b>SELECT SCHEDULE TO EDIT:</b>\n\n"
+                            edit_buttons = []
+                            for idx, s in enumerate(saved, 1):
+                                edit_buttons.append([{"text": f"Schedule #{idx} ({s.get('start')} - {s.get('end')})", "callback_data": f"sched_edit_sel:{idx-1}"}],)
+                            edit_buttons.append([{"text": "🔙 BACK", "callback_data": "menu:schedule_hub"}])
+                            edit_kb = {"inline_keyboard": edit_buttons}
+                        edit_or_send(chat_id, edit_text, edit_kb, msg_id)
+                    elif cb_data.startswith("sched_edit_sel:"):
+                        user_input_state[chat_id] = {"step": "EDIT_SCHEDULE_INPUT"}
+                        edit_or_send(chat_id, "✏️ <b>Send new time in HH:MM format (e.g. 23:00) to update this schedule:</b>", {"inline_keyboard": [[{"text": "❌ CANCEL", "callback_data": "sched_cancel"}]]}, msg_id)
+                    elif cb_data == "menu:profile":
+                        send_profile_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data == "menu:tz_picker":
+                        send_tz_picker(chat_id, target_msg_id=msg_id)
+                    elif cb_data.startswith("set_tz:"):
+                        offset_val = float(cb_data.split(":")[-1])
+                        set_user_tz(chat_id, offset_val)
+                        send_profile_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data == "menu:auto_market_select":
+                        is_vip = is_vip_user(chat_id, username)
+                        user_tz, _ = get_user_tz(chat_id)
+                        used_today = get_user_daily_usage(chat_id, user_tz)
+                        if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
+                            kb = {
+                                "inline_keyboard": [
+                                    [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
+                                    [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
+                                ]
+                            }
+                            TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
+                            continue
+
+                        real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
+                        edit_or_send(chat_id, "🌐 <b>SELECT AUTO MODE MARKET:</b>", {"inline_keyboard": [[{"text": real_status_label, "callback_data": "auto_start:real"}], [{"text": "🛡 QUOTEX OTC", "callback_data": "auto_start:quotex"}], [{"text": "🚀 POCKET OPTION OTC", "callback_data": "auto_start:pocket"}], [{"text": "🔙 BACK", "callback_data": "back_to_menu"}]]}, msg_id)
+                    elif cb_data.startswith("auto_start:"):
+                        b_type = cb_data.split(":")[-1]
+                        
+                        is_vip = is_vip_user(chat_id, username)
+                        user_tz, _ = get_user_tz(chat_id)
+                        used_today = get_user_daily_usage(chat_id, user_tz)
+                        if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
+                            kb = {
+                                "inline_keyboard": [
+                                    [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
+                                    [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
+                                ]
+                            }
+                            TelegramBot(chat_id=chat_id).send_message(build_limit_exceeded_card(), reply_markup=kb)
+                            continue
+
+                        auto_mode_users[str(chat_id)] = False
+                        time.sleep(0.3)
+                        auto_mode_users[str(chat_id)] = True
+
+                        TelegramBot(chat_id=chat_id).send_message(f"<b>[⚙️] AUTO MODE ACTIVATED ({b_type.upper()}) ✅</b>", reply_markup={"inline_keyboard": [[{"text": "🛑 STOP AUTO", "callback_data": "auto_btn:stop"}]]})
+                        threading.Thread(target=auto_mode_loop, args=(chat_id, username, b_type), daemon=True).start()
+                    elif cb_data == "proto_btn:stop" or cb_data == "auto_btn:stop":
+                        auto_mode_users[str(chat_id)] = False
+                        TelegramBot(chat_id=chat_id).send_message("🛑 <b>Auto Signal Mode Stopped.</b>", reply_markup={"inline_keyboard": [[{"text": "▶️ RESTART AUTO", "callback_data": "menu:auto_market_select"}], [{"text": "🏠 HOME MENU", "callback_data": "back_to_menu"}]]})
+                    elif cb_data.startswith("auto_btn:analysis:"):
+                        b_type = cb_data.split(":")[-1]
+                        deliver_auto_signal(chat_id, username=username, broker_type=b_type)
+                    elif cb_data == "auto_btn:partial":
+                        user_tz, _ = get_user_tz(chat_id)
+                        TelegramBot(chat_id=chat_id).send_message(build_partial_scoreboard_text(chat_id, user_tz), reply_markup={"inline_keyboard": [[{"text": "🔄 NEW SIGNAL", "callback_data": "auto_btn:next"}, {"text": "❌ RESET PARTIAL", "callback_data": "partial:reset"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
+                    elif cb_data == "partial:reset":
+                        user_partial_data[str(chat_id)] = []
+                        send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data == "menu:future":
+                        real_status_label = "🟢 REAL MARKET (OPEN)" if is_real_market_open() else "🔴 REAL MARKET (CLOSED)"
+                        edit_or_send(chat_id, "🌐 <b>SELECT FUTURE MODE MARKET:</b>", {"inline_keyboard": [[{"text": real_status_label, "callback_data": "select_mkt:real:real"}], [{"text": "🛡 QUOTEX OTC", "callback_data": "select_mkt:quotex:quotex"}], [{"text": "🚀 POCKET OPTION OTC", "callback_data": "select_mkt:pocket:pocket"}], [{"text": "🔙 BACK", "callback_data": "back_to_menu"}]]}, msg_id)
+                    elif cb_data.startswith("select_mkt:"):
+                        parts = cb_data.split(":")
+                        session_state.setdefault(chat_id, {})["broker"] = parts[1]
+                        session_state.setdefault(chat_id, {})["broker_type"] = parts[2]
+                        edit_or_send(chat_id, "⏱ <b>SELECT SIGNAL DURATION:</b>", {"inline_keyboard": [[{"text": "⏱ 15 min", "callback_data": "time:15"}, {"text": "⏱ 30 min", "callback_data": "time:30"}], [{"text": "⏱ 1 Hour", "callback_data": "time:60"}, {"text": "⏱ 2 Hours", "callback_data": "time:120"}], [{"text": "🔥 4 Hours (Large Batch)", "callback_data": "time:240"}], [{"text": "🔙 Back", "callback_data": "menu:future"}]]}, msg_id)
+                    elif cb_data.startswith("time:"):
+                        session_state.setdefault(chat_id, {})["window_mins"] = int(cb_data.split(":")[-1])
+                        generate_and_send_batch_signals(chat_id, msg_id, username=username)
+                    elif cb_data == "btn:refresh":
+                        batch = active_batches.get(chat_id)
+                        if batch:
+                            user_tz, tz_off = get_user_tz(chat_id)
+                            updated_text = build_exact_user_format(batch["signals"], batch["broker"], user_tz, tz_off)
+                            TelegramBot(chat_id=chat_id).edit_message(msg_id, updated_text, reply_markup={"inline_keyboard": [[{"text": "💥 REFRESH NOW", "callback_data": "btn:refresh"}, {"text": "🔮 GENERATE NEW LIST", "callback_data": "btn:gen_new"}], [{"text": "🗑 DELETE", "callback_data": "btn:del_list"}, {"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
+                    elif cb_data == "btn:gen_new":
+                        generate_and_send_batch_signals(chat_id, msg_id, username=username)
+                    elif cb_data == "btn:del_list":
+                        active_batches.pop(chat_id, None)
+                        save_active_batches_to_disk()
+                        TelegramBot(chat_id=chat_id).delete_message(msg_id)
+                        send_main_menu(chat_id, username=username)
+                    elif cb_data == "menu:daily_summary":
+                        history = load_json(HISTORY_FILE)
+                        user_tz, _ = get_user_tz(chat_id)
+                        today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
+                        d_stats = history.get(chat_id, {}).get(today_str, {"win": 0, "mtg": 0, "loss": 0})
+                        total = d_stats.get('win', 0) + d_stats.get('mtg', 0) + d_stats.get('loss', 0)
+                        wins_total = d_stats.get('win', 0) + d_stats.get('mtg', 0)
+                        winrate = f"{(wins_total) / total * 100:.1f}%" if total > 0 else "0.0%"
+                        summary_text = (
+                            f"📊 <b>DAILY SUMMARY ({today_str})</b>\n────────────────────────\n🟩 Direct Wins: {d_stats.get('win', 0)}\n🛡 MTG Wins: {d_stats.get('mtg', 0)}\n❌ Loss: {d_stats.get('loss', 0)}\n🎯 Total Win Rate: {winrate}"
+                        )
+                        edit_or_send(chat_id, summary_text, {"inline_keyboard": [[{"text": "🔙 Back", "callback_data": "back_to_menu"}]]}, msg_id)
+                    elif cb_data == "menu:support":
+                        TelegramBot(chat_id=chat_id).send_message(f"📞 <b>SUPPORT</b>\n\nAdmin: <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>")
+                        send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data.startswith("menu:about"):
+                        TelegramBot(chat_id=chat_id).send_message(f"ℹ️ <b>ABOUT</b>\n\n{BOT_TITLE} — VIP Signal Bot V1.")
+                        send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+                    elif cb_data == "back_to_menu":
+                        user_input_state.pop(chat_id, None)
+                        send_main_menu(chat_id, username=username, target_msg_id=msg_id)
+
+        except Exception as e:
             time.sleep(1)
 
 if __name__ == "__main__":
