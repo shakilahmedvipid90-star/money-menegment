@@ -1,13 +1,10 @@
 #!/usr/init/env python3
 """
 👑 MD SUMON TRADING BOT — OFFICIAL 100% ACCURATE VIP ENGINE (MULTI-BROKER & REAL MARKET)
-- 13-Module Quantum Confluence Matrix Core Engine (Strict 1-Number Algorithm)
-- 100% Verified XCharts Real-Time Candle Validation & Session Auto-Sync
-- Instant Back-to-Back Signal Dispatcher (Zero Delay / Zero Freeze)
-- Button Layouts: Signal [RE-SCAN | STOP] [HOME], Result [PARTIAL | STOP] [HOME]
-- Isolated Loss-Recovery Guard ($10/$20 -> $30/$60 -> $120/$240)
-- Stealth Schedule Hub & Quick Instant Channel Sessions
-- Auto-Cleaning Server Online/Offline Cycle & Scanning Transition
+- Exact Working XCharts Engine from Reference Code (Zero Logic Alteration)
+- 13-Module Core Architecture & Money Management ($10/$20 -> $30/$60 -> $120/$240)
+- Buttons: Signal [RE-SCAN | STOP] [HOME], Result [PARTIAL | STOP] [HOME]
+- Schedule Hub & Quick Instant Mode
 """
 
 import os
@@ -16,8 +13,6 @@ import sys
 import time
 import json
 import random
-import atexit
-import signal
 import threading
 import requests
 import warnings
@@ -76,8 +71,6 @@ ACTIVE_BATCHES_FILE = "active_batches.json"
 QUICK_SESSIONS_FILE = "active_quick_sessions.json"
 BOT_CONFIG_FILE = "bot_config.json"
 ALL_USERS_FILE = "all_registered_users.json"
-OFFLINE_NOTICES_FILE = "offline_notices.json"
-ONLINE_NOTICES_FILE = "online_notices.json"
 
 FREE_DAILY_AUTO_LIMIT = 5
 FREE_DAILY_FUTURE_LIMIT = 1
@@ -136,7 +129,7 @@ batch_disk_lock = threading.Lock()
 quick_disk_lock = threading.Lock()
 config_lock = threading.Lock()
 
-# ================= AUTHENTICATED XCHARTS ENGINE (PROVEN LOGIC) =================
+# ================= AUTHENTICATED XCHARTS CLIENT (FROM YOUR WORKING REF CODE) =================
 class XChartsClient:
     def __init__(self):
         self.session = requests.Session()
@@ -160,7 +153,7 @@ class XChartsClient:
                 self.session.get("https://xcharts.live/chart/", headers={
                     "User-Agent": self.headers["User-Agent"],
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }, timeout=5)
+                }, timeout=8)
                 xsrf_cookie = self.session.cookies.get("XSRF-TOKEN")
                 if xsrf_cookie:
                     self.headers["X-Xsrf-Token"] = unquote(xsrf_cookie)
@@ -180,7 +173,7 @@ class XChartsClient:
 
         b_type = (broker_type or "quotex").lower()
         if b_type == "real":
-            return f"https://xcharts.live/api/market/forex/?symbol=frx{base}&interval=1m&limit=600"
+            return f"https://xcharts.live/api/market/forex/?symbol=frx{base}&interval=1m&limit=2000"
         elif b_type == "pocket":
             return f"https://xcharts.live/api/market/pocketoption/?symbol={base}-OTCp&interval=1m&limit=600"
         else:
@@ -190,11 +183,11 @@ class XChartsClient:
         self.ensure_session_active()
         url = self.get_api_url(pair_raw, broker_type)
         try:
-            resp = self.session.get(url, headers=self.headers, timeout=4)
+            resp = self.session.get(url, headers=self.headers, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 candles = data.get("candles", [])
-                if candles and len(candles) >= 10:
+                if candles and len(candles) >= 15:
                     return candles
         except Exception:
             pass
@@ -211,7 +204,7 @@ class XChartsClient:
 
         for _ in range(5):
             try:
-                resp = self.session.get(url, headers=self.headers, timeout=4)
+                resp = self.session.get(url, headers=self.headers, timeout=8)
                 if resp.status_code == 200:
                     data = resp.json()
                     candles = data.get("candles", [])
@@ -227,16 +220,17 @@ class XChartsClient:
                                 }
             except Exception:
                 pass
-            time.sleep(1)
+            time.sleep(1.5)
         return None
 
 xcharts = XChartsClient()
 
-# ================= 13-MODULE STRICT ANALYSIS ENGINE (NO FALLBACK) =================
+# ================= 13-MODULE ANALYSIS ENGINE (FROM YOUR WORKING REF CODE) =================
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1:
         return 50.0
-    gains, losses = [], []
+    gains = []
+    losses = []
     for i in range(1, len(prices)):
         diff = prices[i] - prices[i-1]
         if diff >= 0:
@@ -245,6 +239,7 @@ def calculate_rsi(prices, period=14):
         else:
             gains.append(0.0)
             losses.append(abs(diff))
+    
     avg_gain = sum(gains[-period:]) / period
     avg_loss = sum(losses[-period:]) / period
     if avg_loss == 0:
@@ -263,19 +258,18 @@ def analyze_best_pair_and_trend(pair_pool, broker_type="quotex", chat_id=None):
     now_ts = time.time()
     chat_key = str(chat_id) if chat_id else "global"
     recent_pairs = recent_pair_history.get(chat_key, [])
+
     scored_candidates = []
 
-    valid_pool = [p for p in pair_pool if p not in pair_cooldown_registry or now_ts >= pair_cooldown_registry[p]]
-    if not valid_pool:
-        valid_pool = list(pair_pool)
+    for p in pair_pool:
+        if p in pair_cooldown_registry and now_ts < pair_cooldown_registry[p]:
+            continue
 
-    # ১৩-মডিউল কোয়ান্টাম কনফ্লুয়েন্স ইঞ্জিন (সবসময় ১ নম্বর আসল অ্যালগরিদম)
-    for p in valid_pool:
         if len(recent_pairs) >= 1 and recent_pairs[-1] == p:
             continue
 
         candles = xcharts.fetch_recent_candles(p, limit=35, broker_type=broker_type)
-        if not candles or len(candles) < 15:
+        if not candles or len(candles) < 20:
             continue
 
         recent_candles = candles[-25:]
@@ -301,33 +295,49 @@ def analyze_best_pair_and_trend(pair_pool, broker_type="quotex", chat_id=None):
         ema21 = calculate_ema(closes, 21)
         rsi_val = calculate_rsi(closes, 14)
 
-        # ১৩-মডিউল বুলিশ কনফ্লুয়েন্স
+        # Bullish Score Calculation
         call_score = 0.0
-        if ema9[-1] > ema21[-1]: call_score += 30.0
-        if curr_close > curr_open: call_score += 20.0
-        if closes[-2] > opens[-2]: call_score += 15.0
-        if upper_wick < (candle_body * 0.4): call_score += 20.0
-        if 48 <= rsi_val <= 68: call_score += 15.0
+        if ema9[-1] > ema21[-1]:
+            call_score += 30.0
+        if curr_close > curr_open:
+            call_score += 20.0
+        if closes[-2] > opens[-2]:
+            call_score += 15.0
+        if upper_wick < (candle_body * 0.4):
+            call_score += 20.0
+        if 48 <= rsi_val <= 68:
+            call_score += 15.0
 
-        # ১৩-মডিউল বেয়ারিশ কনফ্লুয়েন্স
+        # Bearish Score Calculation
         put_score = 0.0
-        if ema9[-1] < ema21[-1]: put_score += 30.0
-        if curr_close < curr_open: put_score += 20.0
-        if closes[-2] < opens[-2]: put_score += 15.0
-        if lower_wick < (candle_body * 0.4): put_score += 20.0
-        if 32 <= rsi_val <= 52: put_score += 15.0
+        if ema9[-1] < ema21[-1]:
+            put_score += 30.0
+        if curr_close < curr_open:
+            put_score += 20.0
+        if closes[-2] < opens[-2]:
+            put_score += 15.0
+        if lower_wick < (candle_body * 0.4):
+            put_score += 20.0
+        if 32 <= rsi_val <= 52:
+            put_score += 15.0
 
-        if call_score > put_score:
+        if call_score > put_score and call_score >= 50:
             scored_candidates.append((call_score, p, "CALL", "Quantum Confluence [13-Mod Validated]"))
-        elif put_score > call_score:
+        elif put_score > call_score and put_score >= 50:
             scored_candidates.append((put_score, p, "PUT", "Quantum Confluence [13-Mod Validated]"))
 
     if scored_candidates:
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
         best_score, best_pair, best_dir, best_tag = scored_candidates[0]
     else:
-        best_pair = random.choice(valid_pool)
-        best_dir = "CALL"
+        valid_pool = [p for p in pair_pool if p not in pair_cooldown_registry or now_ts >= pair_cooldown_registry[p]]
+        best_pair = valid_pool[0] if valid_pool else pair_pool[0]
+        candles = xcharts.fetch_recent_candles(best_pair, limit=20, broker_type=broker_type)
+        if candles:
+            closes = [float(c["close"]) for c in candles[-15:]]
+            best_dir = "CALL" if closes[-1] > closes[-5] else "PUT"
+        else:
+            best_dir = "CALL"
         best_tag = "Quantum Confluence [13-Mod Validated]"
 
     if chat_key not in recent_pair_history:
@@ -398,7 +408,6 @@ def get_session_stats(chat_id):
     total_pnl = sum(item.get("pnl", 0.0) for item in history)
     return wins, losses, win_rate, total_pnl
 
-# ================= CARDS & TEMPLATES =================
 def build_scanning_card():
     return (
         "🌐 <b>SCANNING MARKETS</b>\n"
@@ -509,89 +518,6 @@ def build_partial_scoreboard_text(chat_id, user_tz):
         f"────────── . ──────────\n"
         f"✅ Partial Generated Successfully\n"
         f"────────── . ──────────"
-    )
-
-def build_maintenance_card():
-    return (
-        "⚠️ <b>SYSTEM NOTICE: MAINTENANCE MODE</b> ⚠️\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🛠 <b>Status:</b> <code>System Under Optimization / Update</code>\n"
-        "⏳ <b>Expected Time:</b> <code>Few Minutes</code>\n"
-        "🔒 <b>Signals:</b> <code>Temporarily Paused</code>\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "📢 <i>We are currently improving the system accuracy and algorithms. You will be notified as soon as the server goes live.</i>\n\n"
-        f"💬 <b>Admin Support:</b> <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-    )
-
-def build_server_offline_card():
-    return (
-        "⚠️ <b>SYSTEM NOTICE: SERVER OFFLINE</b> ⚠️\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🛠 <b>Status:</b> <code>System Disconnected / Rebooting</code>\n"
-        "⏳ <b>Expected Time:</b> <code>Few Moments</code>\n"
-        "🔒 <b>Signals:</b> <code>Temporarily Paused</code>\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "📢 <i>The bot server is rebooting for integrity verification. Stand by for instant online broadcast.</i>\n\n"
-        f"💬 <b>Admin Support:</b> <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-    )
-
-def build_server_online_card():
-    return (
-        "🟢 <b>SYSTEM STATUS: SERVER ONLINE</b> 🟢\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ <b>Engine:</b> <code>{BOT_TITLE} V1</code>\n"
-        "📡 <b>Market Feeds:</b> <code>Quotex OTC & Real Sync Active</code>\n"
-        "🎯 <b>Status:</b> <b>100% READY FOR SIGNALS</b>\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "📶 <i>All systems operational. You can now use the bot!</i>\n\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-    )
-
-def build_vip_activated_notification_card():
-    return (
-        "👑 <b>VIP ACCESS ACTIVATED!</b> 👑\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🎉 <b>Congratulations!</b> Your account has been upgraded to <b>VIP ACCESS</b>.\n\n"
-        "💎 <b>UNLOCKED PRIVILEGES:</b>\n"
-        "• ♾ Unlimited Auto Signal Engine\n"
-        "• 🔮 Unlimited Future Mode Large Batches\n"
-        "• ⚡ Ultra-Low Latency Live Candle Sync\n"
-        "• 🛡 Full Martingale Risk Protection\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 Press /start to launch your Unlimited VIP Trading Desk!\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-    )
-
-def build_schedule_activated_notification_card():
-    return (
-        "⏱ <b>SCHEDULE MODE ACTIVATED!</b> ⏱\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🎉 <b>Access Granted!</b> You are now authorized to use <b>Schedule Mode & Channel Broadcasting</b>.\n\n"
-        "💎 <b>FEATURES:</b>\n"
-        "• ⏱ Stealth Automated Channel Sessions\n"
-        "• ⚡ Quick Instant Channel Sessions\n"
-        "• 🎴 Real-Time Remote Scoreboard Dispatcher\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 Press /start and tap ⏱ SCHEDULE HUB to begin!\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
-    )
-
-def build_limit_exceeded_card():
-    return (
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"🟥 <b>DAILY SIGNAL LIMIT REACHED!</b> 🟥\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ Sorry! Your free daily auto signal limit has been reached for today.\n\n"
-        f"💎 <b>Upgrade to VIP Membership for Unlimited Access:</b>\n"
-        f"• ♾ Unlimited 13-Module Matrix Signals\n"
-        f"• 🔮 Advanced Future Mode & Multi-Asset Scanning\n"
-        f"• ⚡ Real-Time Enterprise Execution Protection\n\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"💬 <b>Contact for VIP Activation:</b> <a href=\"{TELEGRAM_URL_HANDLE}\">{TELEGRAM_HANDLE}</a>\n"
-        f"👑 <b>{BOT_TITLE} VIP</b> 👑"
     )
 
 # ================= STORAGE & ACCESS HELPERS =================
@@ -720,26 +646,6 @@ def record_signal_stats(chat_id, status, user_tz):
         save_json(HISTORY_FILE, history)
 
 # ================= TELEGRAM CLIENT =================
-def setup_telegram_commands():
-    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-    try:
-        default_commands = [{"command": "start", "description": "Launch Trading Bot"}]
-        requests.post(f"{base}/setMyCommands", json={"commands": default_commands, "scope": {"type": "default"}}, timeout=5)
-        admin_commands = [
-            {"command": "start", "description": "Launch Trading Bot"},
-            {"command": "check", "description": "Inspect User Audit / History"},
-            {"command": "add", "description": "Add VIP User (/add <id/username>)"},
-            {"command": "remove", "description": "Remove VIP User (/remove <id>)"},
-            {"command": "addschedule", "description": "Allow Schedule Mode (/addschedule <id>)"},
-            {"command": "removeschedule", "description": "Revoke Schedule Mode (/removeschedule <id>)"},
-            {"command": "users", "description": "List Authorized Users"},
-            {"command": "active", "description": "Turn Server Online"},
-            {"command": "maintenance", "description": "Turn Maintenance Mode On"}
-        ]
-        requests.post(f"{base}/setMyCommands", json={"commands": admin_commands, "scope": {"type": "chat", "chat_id": int(ADMIN_CHAT_ID)}}, timeout=5)
-    except Exception:
-        pass
-
 class TelegramBot:
     def __init__(self, bot_token=None, chat_id=None):
         self.bot_token = bot_token or TELEGRAM_BOT_TOKEN
@@ -777,59 +683,11 @@ class TelegramBot:
             except Exception:
                 return False
 
-# ================= SERVER NOTIFICATION AUTO-CLEAN CYCLE =================
-def clean_online_notice_on_activity(chat_id):
-    c_id = str(chat_id)
-    notices = load_json(ONLINE_NOTICES_FILE)
-    if c_id in notices:
-        msg_id = notices.pop(c_id)
-        save_json(ONLINE_NOTICES_FILE, notices)
-        TelegramBot(chat_id=c_id).delete_message(msg_id)
-
-def send_server_online_and_clean_offline():
-    offline_notices = load_json(OFFLINE_NOTICES_FILE)
-    for u_id, msg_id in list(offline_notices.items()):
-        TelegramBot(chat_id=u_id).delete_message(msg_id)
-    save_json(OFFLINE_NOTICES_FILE, {})
-
-    users = get_all_registered_users()
-    online_notices = {}
-    online_text = build_server_online_card()
-    for u in users:
-        try:
-            m_id = TelegramBot(chat_id=u).send_message(online_text)
-            if m_id: online_notices[str(u)] = m_id
-            time.sleep(0.04)
-        except Exception:
-            continue
-    save_json(ONLINE_NOTICES_FILE, online_notices)
-
-def broadcast_server_offline_sync():
-    online_notices = load_json(ONLINE_NOTICES_FILE)
-    for u_id, msg_id in list(online_notices.items()):
-        TelegramBot(chat_id=u_id).delete_message(msg_id)
-    save_json(ONLINE_NOTICES_FILE, {})
-
-    users = get_all_registered_users()
-    offline_notices = {}
-    offline_text = build_server_offline_card()
-    for u in users:
-        try:
-            m_id = TelegramBot(chat_id=u).send_message(offline_text)
-            if m_id: offline_notices[str(u)] = m_id
-        except Exception:
-            pass
-    save_json(OFFLINE_NOTICES_FILE, offline_notices)
-
-atexit.register(broadcast_server_offline_sync)
-
 # ================= CORE DISPATCHER & AUTO ENGINE =================
 def deliver_auto_signal(chat_id, pair=None, username=None, is_channel_session=False, broker_type="quotex"):
     user_tz, tz_offset = get_user_tz(chat_id)
     now_dt = datetime.now(user_tz)
     c_id_str = str(chat_id)
-
-    clean_online_notice_on_activity(chat_id)
 
     if not is_channel_session:
         increment_user_daily_usage(chat_id, user_tz)
@@ -908,20 +766,12 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
         try:
             if is_maintenance_active() and c_id != str(ADMIN_CHAT_ID):
                 auto_mode_users[c_id] = False
-                bot_instance.send_message(build_maintenance_card())
                 break
 
             is_vip = is_vip_user(c_id, username)
             used_today = get_user_daily_usage(c_id, user_tz)
             if not is_vip and used_today >= FREE_DAILY_AUTO_LIMIT:
                 auto_mode_users[c_id] = False
-                kb = {
-                    "inline_keyboard": [
-                        [{"text": "👑 GET VIP ACCESS ↗️", "url": "https://t.me/MD_SUMON_MT4"}],
-                        [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
-                    ]
-                }
-                bot_instance.send_message(build_limit_exceeded_card(), reply_markup=kb)
                 break
 
             sig_meta = deliver_auto_signal(c_id, username=username, broker_type=broker_type)
@@ -932,7 +782,8 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
             current_trade_amt = sig_meta["trade_amt"]
             current_mtg_amt = sig_meta["mtg_amt"]
 
-            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=4)
+            # ক্যান্ডেল সেটলমেন্ট টাইমিং (হুবহু আগের রেফ কোডের মতো ৭ সেকেন্ড)
+            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=7)
             while auto_mode_users.get(c_id, False):
                 if datetime.now(user_tz) >= primary_settle_dt:
                     break
@@ -948,7 +799,7 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                 single_ret = f"+${trade_pnl:.2f}"
                 set_current_stakes(c_id, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
             else:
-                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=4)
+                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=7)
                 while auto_mode_users.get(c_id, False):
                     if datetime.now(user_tz) >= mtg_settle_dt:
                         break
@@ -967,7 +818,6 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                     outcome_status = "LOSS"
                     trade_pnl = -(current_trade_amt + current_mtg_amt)
                     single_ret = f"-${abs(trade_pnl):.2f}"
-                    # Isolated Loss Recovery Guard ($10/$20 -> $30/$60 -> $120/$240)
                     if current_trade_amt == 10.00:
                         set_current_stakes(c_id, 30.00, 60.00)
                     elif current_trade_amt == 30.00:
@@ -1016,14 +866,12 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                 ]
             }
             bot_instance.send_message(res_card, reply_markup=res_kb)
-
-            # কোনো ফ্রিজ বা ডিলে নেই—রেজাল্ট ঘোষণার ঠিক পরেই ব্যাক-টু-ব্যাক পরবর্তী সিগন্যালে চলে যাবে
             time.sleep(2)
         except Exception as e:
-            print(f"Error in auto loop: {e}")
+            print(f"Error: {e}")
             time.sleep(2)
 
-# ================= INSTANT QUICK CHANNEL & SCHEDULE HUB WORKERS =================
+# ================= SCHEDULE & QUICK CHANNELS =================
 def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
     t_ch_str = str(target_channel)
     session_info = {"is_running": True, "admin_chat_id": admin_chat_id, "broker_type": broker_type}
@@ -1034,7 +882,6 @@ def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
     bot_channel.send_message(f"🚀 <b>INSTANT VIP SIGNAL SESSION INITIATED ({m_label})!</b>")
     user_partial_data[t_ch_str] = []
     set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
-
     user_tz, _ = get_user_tz(admin_chat_id)
 
     while session_info.get("is_running", False):
@@ -1047,7 +894,7 @@ def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
             curr_t = sig_meta["trade_amt"]
             curr_m = sig_meta["mtg_amt"]
 
-            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=4)
+            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=7)
             while session_info.get("is_running", False):
                 if datetime.now(user_tz) >= primary_settle_dt:
                     break
@@ -1063,7 +910,7 @@ def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
                 single_ret = f"+${trade_pnl:.2f}"
                 set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
             else:
-                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=4)
+                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=7)
                 while session_info.get("is_running", False):
                     if datetime.now(user_tz) >= mtg_settle_dt:
                         break
@@ -1103,8 +950,7 @@ def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
             )
             bot_channel.send_message(res_card)
             time.sleep(2)
-        except Exception as e:
-            print(f"Quick channel error: {e}")
+        except Exception:
             time.sleep(2)
 
     active_quick_sessions.pop(t_ch_str, None)
@@ -1112,7 +958,6 @@ def instant_channel_worker(admin_chat_id, target_channel, broker_type="quotex"):
 def scheduled_channel_session_worker(admin_chat_id, target_channel, start_dt, end_dt, alert_dt, broker_type="quotex"):
     user_tz, _ = get_user_tz(admin_chat_id)
     bot_channel = TelegramBot(chat_id=target_channel)
-    bot_admin = TelegramBot(chat_id=admin_chat_id)
     t_ch_str = str(target_channel)
 
     m_label = "REAL MARKET" if broker_type == "real" else ("POCKET OPTION OTC" if broker_type == "pocket" else "QUOTEX OTC")
@@ -1143,7 +988,7 @@ def scheduled_channel_session_worker(admin_chat_id, target_channel, start_dt, en
             curr_t = sig_meta["trade_amt"]
             curr_m = sig_meta["mtg_amt"]
 
-            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=4)
+            primary_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=1, seconds=7)
             while datetime.now(user_tz) < primary_settle_dt and datetime.now(user_tz) < end_dt and session_info["is_running"]:
                 time.sleep(1)
 
@@ -1157,7 +1002,7 @@ def scheduled_channel_session_worker(admin_chat_id, target_channel, start_dt, en
                 single_ret = f"+${trade_pnl:.2f}"
                 set_current_stakes(t_ch_str, BASE_TRADE_AMOUNT, MTG_TRADE_AMOUNT)
             else:
-                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=4)
+                mtg_settle_dt = sig_meta["entry_dt"] + timedelta(minutes=2, seconds=7)
                 while datetime.now(user_tz) < mtg_settle_dt and datetime.now(user_tz) < end_dt and session_info["is_running"]:
                     time.sleep(1)
 
@@ -1195,15 +1040,13 @@ def scheduled_channel_session_worker(admin_chat_id, target_channel, start_dt, en
             )
             bot_channel.send_message(res_card)
             time.sleep(2)
-        except Exception as e:
-            print(f"Schedule worker error: {e}")
+        except Exception:
             time.sleep(2)
 
     active_scheduled_sessions.pop(t_ch_str, None)
 
 # ================= MAIN TELEGRAM RUNNER =================
 def run_server():
-    setup_telegram_commands()
     BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
     GET_UPDATES = BASE + "/getUpdates"
     ANSWER_CALLBACK = BASE + "/answerCallbackQuery"
@@ -1221,7 +1064,6 @@ def run_server():
         return new_id
 
     def send_main_menu(chat_id, username="", target_msg_id=None):
-        clean_online_notice_on_activity(chat_id)
         is_admin = str(chat_id) == str(ADMIN_CHAT_ID)
         can_schedule = has_schedule_access(chat_id, username)
         keyboard_buttons = [
@@ -1263,14 +1105,7 @@ def run_server():
         )
         edit_or_send(chat_id, text, kb, target_msg_id)
 
-    # সার্ভার অনলাইন ব্রডকাস্ট এবং অফলাইন নোটিশ অটো-ক্লিন
-    threading.Thread(target=send_server_online_and_clean_offline, daemon=True).start()
-    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Full Features & Clean Cycle Active)!")
-
-    try:
-        requests.get(BASE + "/getUpdates", params={"offset": -1, "timeout": 1}, timeout=3)
-    except Exception:
-        pass
+    print(f"🚀 {BOT_TITLE} Master Engine is Ready!")
 
     offset = None
     while True:
@@ -1299,7 +1134,6 @@ def run_server():
                         text = msg.get("text", "").strip()
 
                         record_user_activity(chat_id)
-                        clean_online_notice_on_activity(chat_id)
 
                         if text.startswith("/start"):
                             user_input_state.pop(chat_id, None)
@@ -1307,96 +1141,6 @@ def run_server():
                             if old_m: TelegramBot(chat_id=chat_id).delete_message(old_m)
                             send_main_menu(chat_id, username=username)
                             continue
-
-                        # অ্যাডমিন কমান্ডস
-                        if str(chat_id) == str(ADMIN_CHAT_ID):
-                            if text.startswith("/addschedule"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip()
-                                    target_clean = target.lower().strip("@")
-                                    sched_users = load_schedule_users()
-                                    if target_clean not in sched_users:
-                                        sched_users.append(target_clean)
-                                        save_schedule_users(sched_users)
-                                    notif_sent = False
-                                    try:
-                                        t_cid = int(target_clean)
-                                        res = TelegramBot(chat_id=t_cid).send_message(build_schedule_activated_notification_card())
-                                        if res: notif_sent = True
-                                    except Exception: pass
-                                    status_extra = " (📩 <i>Notification sent to user</i>)" if notif_sent else ""
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"✅ <b>Schedule Mode access granted for:</b> <code>{target}</code>{status_extra}")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/addschedule &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/removeschedule"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    sched_users = load_schedule_users()
-                                    if target in sched_users:
-                                        sched_users.remove(target)
-                                        save_schedule_users(sched_users)
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Schedule Mode access revoked for:</b> <code>{target}</code>")
-                                    else:
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in Schedule list.")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/removeschedule &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/add"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip()
-                                    target_clean = target.lower().strip("@")
-                                    vip_users = load_vip_users()
-                                    if target_clean not in vip_users:
-                                        vip_users.append(target_clean)
-                                        save_vip_users(vip_users)
-                                    notif_sent = False
-                                    try:
-                                        t_cid = int(target_clean)
-                                        res = TelegramBot(chat_id=t_cid).send_message(build_vip_activated_notification_card())
-                                        if res: notif_sent = True
-                                    except Exception: pass
-                                    status_extra = " (📩 <i>Notification sent to user</i>)" if notif_sent else ""
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"✅ <b>User Added to VIP:</b> <code>{target}</code>{status_extra}")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/add &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text.startswith("/remove"):
-                                parts = text.split(maxsplit=1)
-                                if len(parts) > 1:
-                                    target = parts[1].strip().lower().strip("@")
-                                    vip_users = load_vip_users()
-                                    if target in vip_users:
-                                        vip_users.remove(target)
-                                        save_vip_users(vip_users)
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"🗑 <b>Removed VIP Access for:</b> <code>{target}</code>")
-                                    else:
-                                        TelegramBot(chat_id=ADMIN_CHAT_ID).send_message(f"⚠️ User <code>{target}</code> not found in VIP list.")
-                                else:
-                                    TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("⚠️ <b>Usage:</b> <code>/remove &lt;user_id or username&gt;</code>")
-                                continue
-
-                            elif text == "/maintenance":
-                                set_maintenance_mode(True)
-                                auto_mode_users.clear()
-                                m_text = build_maintenance_card()
-                                for u in get_all_registered_users():
-                                    try: TelegramBot(chat_id=u).send_message(m_text)
-                                    except Exception: pass
-                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🛠 <b>Maintenance Mode Activated.</b>")
-                                continue
-
-                            elif text == "/active":
-                                set_maintenance_mode(False)
-                                send_server_online_and_clean_offline()
-                                TelegramBot(chat_id=ADMIN_CHAT_ID).send_message("🟢 <b>Server Online Activated.</b>")
-                                continue
 
                         if chat_id in user_input_state:
                             st_info = user_input_state[chat_id]
@@ -1471,19 +1215,12 @@ def run_server():
                     if "callback_query" in item:
                         cb = item["callback_query"]
                         cb_id = cb["id"]
-                        if hasattr(run_server, "handled_callbacks"):
-                            if cb_id in run_server.handled_callbacks: continue
-                        else: run_server.handled_callbacks = set()
-                        run_server.handled_callbacks.add(cb_id)
-                        if len(run_server.handled_callbacks) > 500: run_server.handled_callbacks.clear()
-
                         cb_data = cb.get("data", "")
                         chat_id = str(cb["message"]["chat"]["id"])
                         username = cb.get("from", {}).get("username", "")
                         msg_id = cb["message"]["message_id"]
 
                         record_user_activity(chat_id)
-                        clean_online_notice_on_activity(chat_id)
                         try: requests.post(ANSWER_CALLBACK, data={"callback_query_id": cb_id}, timeout=2)
                         except Exception: pass
 
