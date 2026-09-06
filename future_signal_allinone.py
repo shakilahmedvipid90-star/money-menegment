@@ -391,41 +391,6 @@ def get_session_stats(chat_id):
     total_pnl = sum(item.get("pnl", 0.0) for item in history)
     return wins, losses, win_rate, total_pnl
 
-def build_partial_scoreboard_text(chat_id, user_tz):
-    c_id = str(chat_id)
-    history = user_partial_data.get(c_id, [])
-    now_str = datetime.now(user_tz).strftime("%Y.%m.%d")
-    total = len(history)
-    wins = 0
-    losses = 0
-    lines = ""
-    for item in history:
-        res = item.get("result", "❌")
-        if "✅" in res:
-            wins += 1
-            badge = "✅"
-        else:
-            losses += 1
-            badge = "🟥"
-        lines += f"⧉ {item['time']} - {item['pair']} - {item['dir']} {badge}\n────────── . ──────────\n"
-        
-    win_rate = int((wins / total) * 100) if total > 0 else 0
-    return (
-        f"========== PARTIAL ==========\n\n"
-        f"────────── . ──────────\n"
-        f" 🗓 - {now_str}\n"
-        f"────────── . ──────────\n"
-        f" ✅ Total : {total}\n"
-        f"────────── . ──────────\n"
-        f"{lines}"
-        f" 🧮 Placar : {wins} x {losses} ◈ ({win_rate}%)\n"
-        f"────────── . ──────────\n"
-        f"🏆 Win : {wins} ┃ Loss : {losses} ┃ ◈ ({win_rate}%)\n"
-        f"────────── . ──────────\n"
-        f"✅ Partial Sent Successfully\n"
-        f"────────── . ──────────"
-    )
-
 def build_vip_combined_card(clean_pair, direction, confidence, tz_str, algorithm_tag, entry_str, trade_amt, mtg_amt, market_label="QUOTEX OTC"):
     dir_emoji = "🟢" if direction in ["CALL", "BUY"] else "🔴"
     dir_text = "CALL ▲ (BUY UP)" if direction in ["CALL", "BUY"] else "PUT ▼ (SELL DOWN)"
@@ -755,16 +720,10 @@ def deliver_auto_signal(chat_id, pair=None, username=None, is_channel_session=Fa
 
     kb = None
     if not is_channel_session:
-        # সিগন্যাল কার্ডের বাটন লেআউট: উপরে পাশাপাশি [ 🔄 RE-SCAN ] [ 🛑 STOP ] এবং নিচে [ 🏠 HOME ]
         kb = {
             "inline_keyboard": [
-                [
-                    {"text": "🔄 RE-SCAN", "callback_data": f"auto_btn:analysis:{broker_type}"},
-                    {"text": "🛑 STOP", "callback_data": "auto_btn:stop"}
-                ],
-                [
-                    {"text": "🏠 HOME", "callback_data": "back_to_menu"}
-                ]
+                [{"text": "🛑 STOP", "callback_data": "auto_btn:stop"}],
+                [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]
             ]
         }
 
@@ -784,7 +743,7 @@ def deliver_auto_signal(chat_id, pair=None, username=None, is_channel_session=Fa
         "mtg_amt": mtg_amt
     }
 
-# ================= AUTO MODE RUNNER =================
+# ================= AUTO MODE RUNNER (INSTANT BACK-TO-BACK) =================
 def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
     c_id = str(chat_id)
     user_tz, _ = get_user_tz(c_id)
@@ -891,19 +850,17 @@ def auto_mode_loop(chat_id, username=None, broker_type="quotex"):
                 market_label=sig_meta.get("market_label", "QUOTEX OTC")
             )
 
-            # রেজাল্ট কার্ডের বাটন লেআউট: উপরে পাশাপাশি [ 🎴 PARTIAL ] [ 🛑 STOP ] এবং নিচে [ 🏠 HOME ]
             res_kb = {
                 "inline_keyboard": [
                     [
-                        {"text": "🎴 PARTIAL", "callback_data": "auto_btn:partial"},
-                        {"text": "🛑 STOP", "callback_data": "auto_btn:stop"}
-                    ],
-                    [
+                        {"text": "🛑 STOP", "callback_data": "auto_btn:stop"},
                         {"text": "🏠 HOME", "callback_data": "back_to_menu"}
                     ]
                 ]
             }
             bot_instance.send_message(res_card, reply_markup=res_kb)
+
+            # কোনো দীর্ঘ স্লিপ বা ফ্রিজ নাই—রেজাল্ট দেওয়ার ঠিক ২ সেকেন্ড পর পরবর্তী সিগন্যাল চলে আসবে
             time.sleep(2)
         except Exception as e:
             print(f"Error in auto loop: {e}")
@@ -1058,7 +1015,7 @@ def run_server():
         )
         edit_or_send(chat_id, text, kb, target_msg_id)
 
-    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Buttons Updated & Zero Lag)!")
+    print(f"🚀 {BOT_TITLE} Master Engine is Ready (Zero-Delay Feed Active)!")
 
     try:
         requests.get(BASE + "/getUpdates", params={"offset": -1, "timeout": 1}, timeout=3)
@@ -1188,15 +1145,6 @@ def run_server():
                         elif cb_data == "auto_btn:stop":
                             auto_mode_users[str(chat_id)] = False
                             TelegramBot(chat_id=chat_id).send_message("🛑 <b>Auto Mode Terminated.</b>", reply_markup={"inline_keyboard": [[{"text": "▶️ RESTART", "callback_data": "menu:auto_market_select"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]})
-                        elif cb_data.startswith("auto_btn:analysis:"):
-                            b_type = cb_data.split(":")[-1]
-                            deliver_auto_signal(chat_id, username=username, broker_type=b_type)
-                        elif cb_data == "auto_btn:partial":
-                            user_tz, _ = get_user_tz(chat_id)
-                            TelegramBot(chat_id=chat_id).send_message(
-                                build_partial_scoreboard_text(chat_id, user_tz),
-                                reply_markup={"inline_keyboard": [[{"text": "🔄 RE-SCAN", "callback_data": "auto_btn:analysis:quotex"}, {"text": "🛑 STOP", "callback_data": "auto_btn:stop"}], [{"text": "🏠 HOME", "callback_data": "back_to_menu"}]]}
-                            )
                         elif cb_data == "menu:schedule_hub":
                             hub_text = "⏱ <b>SCHEDULE HUB</b>\n\nSelect action below:"
                             hub_kb = {
